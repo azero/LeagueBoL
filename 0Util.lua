@@ -7,6 +7,10 @@ function spellReady(slot)
     return (myHero:CanUseSpell(slot) == READY)
 end
 
+function TARGETING_UnitValid(unit)
+	if unit and ValidTarget(unit) and not unit.isDead then return true end
+	return false
+end
 
 function FindSlotByName(name)
 	if name ~= nil then
