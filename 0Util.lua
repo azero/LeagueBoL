@@ -1,7 +1,134 @@
-local myMenu = scriptConfig("--[[ Zer0 Utility ]]--", "ZUtil")
-local scriptVersion = "2"
+local myMenu = nil
+local scriptVersion = "4"
 local isDebug = true
 local m = nil
+
+function spellReady(slot)
+    return (myHero:CanUseSpell(slot) == READY)
+end
+
+
+function FindSlotByName(name)
+	if name ~= nil then
+		for i=0, 12 do
+			if string.lower(myHero:GetSpellData(i).name) == string.lower(name) then
+				return i
+			end
+		end
+	end  
+	return nil
+end
+
+function PrettyPrint(message, isDebug)
+	if isDebug and not showDebug then return end
+	if m == message then
+		return
+	end
+	print("<font color=\"#FF5733\">[<b><i>0Util</i></b>]</font> <font color=\"#3393FF\">" .. message .. "</font>")
+	m = message
+end
+
+--
+--
+--START: Update
+--
+--
+local AUTOUPDATE = true
+local UPDATE_HOST = "raw.githubusercontent.com"
+local UPDATE_PATH = "/azero/LeagueBoL/master/0Util.lua".."?rand="..math.random(1,10000)
+local UPDATE_FILE_PATH = SCRIPT_PATH..GetCurrentEnv().FILE_NAME
+local UPDATE_URL = "https://"..UPDATE_HOST..UPDATE_PATH
+
+if AUTOUPDATE then
+	local ServerData = GetWebResult(UPDATE_HOST, "/azero/LeagueBoL/master/0Util.ver")
+	if ServerData then
+		ServerVersion = type(tonumber(ServerData)) == "number" and tonumber(ServerData) or nil
+		if ServerVersion then
+			if tonumber(scriptVersion) < ServerVersion then
+				PrettyPrint("New version! Updating to: " .. ServerVersion)
+				DelayAction(function() DownloadFile(UPDATE_URL, UPDATE_FILE_PATH, function () PrettyPrint("Successfully updated. ("..scriptVersion.." => "..ServerVersion.."), press F9 twice to load the updated version.") end) end, 3)
+			end
+		end
+	else
+		PrettyPrint("Error: Could not find version information.", false)
+	end
+end
+
+function NewMessage()
+	local ServerData = GetWebResult(UPDATE_HOST, "/azero/LeagueBoL/master/0Util.msg")
+	if ServerData then
+		PrettyPrint(ServerData)
+	end
+end
+--
+--
+--END: Update
+--
+--
+
+--
+--
+--START: Potions
+--
+--
+function POTIONS_Menu()
+	myMenu:addSubMenu("--[[ Potions ]]--", "Potion")
+		myMenu.Potion:addParam("use", "Use Potions", SCRIPT_PARAM_ONOFF, true)
+		myMenu.Potion:addParam("hp", "HP Percent to Potion", SCRIPT_PARAM_SLICE, 45, 0, 100, 0)
+		myMenu.Potion:addParam("info2", " ", SCRIPT_PARAM_INFO, "")
+		myMenu.Potion:addParam("healthpot", "Health Potion", SCRIPT_PARAM_ONOFF, true)
+		myMenu.Potion:addParam("healthcookie", "Health Cookie", SCRIPT_PARAM_ONOFF, true)
+		myMenu.Potion:addParam("hunterspot", "Hunters Potion", SCRIPT_PARAM_ONOFF, true)
+		myMenu.Potion:addParam("refillablepot", "Refillable Potion", SCRIPT_PARAM_ONOFF, true)
+		myMenu.Potion:addParam("corruptingpot", "Corrupting Potion", SCRIPT_PARAM_ONOFF, true)
+end
+
+local lastPotionTime = os.clock()
+local lastPotionDur = 0
+function PORIONS_Run()
+	if myMenu.Potion.use and os.clock() - lastPotionTime > lastPotionDur and not InFountain() and (myHero.health*100)/myHero.maxHealth < myMenu.Potion.hp then
+		for SLOT = ITEM_1, ITEM_6 do
+			if myHero:GetSpellData(SLOT).name == "RegenerationPotion" and myMenu.Potion.healthpot then
+				PrettyPrint("Using potion [Health Potion]", true)
+				CastSpell(SLOT)
+				lastPotionDur = 15
+				lastPotionTime = os.clock()
+				return true
+			elseif myHero:GetSpellData(SLOT).name == "ItemMiniRegenPotion" and myMenu.Potion.healthcookie then
+				PrettyPrint("Using potion [Cookie]", true)
+				CastSpell(SLOT)
+				lastPotionDur = 15
+				lastPotionTime = os.clock()
+				return true
+			elseif myHero:GetSpellData(SLOT).name == "ItemCrystalFlaskJungle" and myMenu.Potion.hunterspot then
+				PrettyPrint("Using potion [Hunters Potion]", true)
+				CastSpell(SLOT)
+				lastPotionDur = 8
+				lastPotionTime = os.clock()
+				return true
+			elseif myHero:GetSpellData(SLOT).name == "ItemCrystalFlask" and myMenu.Potion.refillablepot then
+				PrettyPrint("Using potion [Refillable Potion]", true)
+				CastSpell(SLOT)
+				lastPotionDur = 12
+				lastPotionTime = os.clock()
+				return true
+			elseif myHero:GetSpellData(SLOT).name == "ItemDarkCrystalFlask" and myMenu.Potion.corruptingpot then
+				PrettyPrint("Using potion [Corrupting Potion]", true)
+				CastSpell(SLOT)
+				lastPotionDur = 12
+				lastPotionTime = os.clock()
+				return true
+			end
+		end
+	end
+	return false
+end
+--
+--
+--END: Potions
+--
+--
+
 
 --
 --
@@ -13,6 +140,7 @@ local smiteSlot = nil
 local dmgSmite = false
 
 function SMITE_Menu()
+	SMITE_Slot()
 	myMenu:addSubMenu("--[[ Smite ]]--", "Smite")
 		myMenu.Smite:addParam("dragon", "Smite Dragon", SCRIPT_PARAM_ONOFF, true)
 		myMenu.Smite:addParam("baron", "Smite Baron", SCRIPT_PARAM_ONOFF, true)
@@ -39,6 +167,9 @@ function SMITE_Slot()
 				dmgSmite = false
 			end
 		end
+	end
+	if smiteSlot ~= nil then
+		PrettyPrint("Smite detected!", false)
 	end
 end
 
@@ -135,36 +266,51 @@ end
 --END: SMITE_Damage
 --
 --
-function spellReady(slot)
-    return (myHero:CanUseSpell(slot) == READY)
-end
 
+--
+--
+--START: Ignite
+--
+--
 
-function FindSlotByName(name)
-  if name ~= nil then
-    for i=0, 12 do
-      if string.lower(myHero:GetSpellData(i).name) == string.lower(name) then
-        return i
-      end
-    end
-  end  
-  return nil
-end
-
-function PrettyPrint(message, isDebug)
-	if isDebug and not showDebug then return end
-	if m == message then
-		return
+local igniteSlot = nil
+function IGNITE_Menu()
+	igniteSlot = FindSlotByName("summonerdot")
+	myMenu:addSubMenu("--[[ Ignite ]]--", "Ignite")
+		myMenu.Ignite:addParam("ignite", "Use Ignite", SCRIPT_PARAM_ONKEYTOGGLE, true, GetKey("H"))
+	if igniteSlot ~= nil then
+		PrettyPrint("Ignite detected!", false)
 	end
-	print("<font color=\"#FF5733\">[<b><i>0Util</i></b>]</font> <font color=\"#3393FF\">" .. message .. "</font>")
-	m = message
 end
+
+function IGNITE_Run()
+	if igniteSlot == nil or not myMenu.Ignite.ignite then return false end
+	for i,enemy in pairs(GetEnemyHeroes()) do
+		if TARGETING_UnitValid(enemy) and igniteSlot and GetDistance(myHero, enemy) <= 600 and ((50 + (20*myHero.level))) >= enemy.health and igniteSlot ~= nil and myHero:CanUseSpell(igniteSlot) == READY then
+			CastSpell(igniteSlot, enemy)
+			PrettyPrint("Ignite: [" .. enemy.charName .. "]", true)
+			return true
+		end
+	end
+	return false
+end
+--
+--
+--END: Ignite
+--
+--
 
 function OnLoad()
 	PrettyPrint("Welcome To Zer0 Utility " .. GetUser() .. " - Version: " .. scriptVersion .. " - By: AZer0", false)
-	PrettyPrint("This script is still in BETA please let me know any errors you may find.")
+	PrettyPrint("This script is still in BETA please let me know any errors you may find.", false)
+	
+	NewMessage()
+	
+	myMenu = scriptConfig("--[[ Zer0 Utility ]]--", "ZUtil")
+	
 	SMITE_Menu()
-	SMITE_Slot()
+	IGNITE_Menu()
+	POTIONS_Menu()
 end
 
 function OnDraw()
@@ -172,5 +318,7 @@ function OnDraw()
 end
 
 function OnTick()
-	SMITE_Run()
+	if SMITE_Run() then return true end
+	if IGNITE_Run() then return true end
+	if PORIONS_Run() then return true end
 end
