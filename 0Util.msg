@@ -1,1 +1,1 @@
-New Features: Ignite, and Potion usage.
+New Features: QSS, Ignite, and Potion usage.

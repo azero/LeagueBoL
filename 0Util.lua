@@ -1,5 +1,5 @@
 local myMenu = nil
-local scriptVersion = "4"
+local scriptVersion = "5"
 local isDebug = true
 local m = nil
 
@@ -67,6 +67,99 @@ end
 --
 --
 --END: Update
+--
+--
+
+local itemList = {
+	[3140] = "Quicksilver Sash"
+}
+
+function HasItem(id)  
+	local itemSlot = GetInventorySlotItem(id)
+	if itemSlot ~= nil then
+		return true
+	else
+		return false
+	end
+end
+
+function ItemReady(id)
+	if HasItem(id) then
+		local itemSlot = GetInventorySlotItem(id)
+		if myHero:CanUseSpell(itemSlot) == READY then
+			return true
+		else
+			return false
+		end
+	else
+		return false
+	end
+end
+
+--
+--
+--START: Anti CC
+--
+--
+local buffList = {
+	[5] = "Stun",
+	[7] = "Silence",
+	[8] = "Taunt",
+	[10] = "Fear",
+	[21] = "Charm",
+	[24] = "Suppression",
+	[25] = "Blind",
+	[29] = "Knock Up"
+}
+
+function ANTICC_Menu()
+	myMenu:addSubMenu("--[[ QSS ]]--", "anticc")
+		myMenu.anticc:addParam("use", "Use QSS", SCRIPT_PARAM_ONOFF, true)
+		myMenu.anticc:addParam("hp", "HP Percent Use QSS", SCRIPT_PARAM_SLICE, 85, 0, 100, 0)
+		myMenu.anticc:addParam("info2", " ", SCRIPT_PARAM_INFO, "")
+		
+		myMenu.anticc:addParam("Stun", "On Stun", SCRIPT_PARAM_ONOFF, true)
+		myMenu.anticc:addParam("Silence", "On Silence", SCRIPT_PARAM_ONOFF, true)
+		myMenu.anticc:addParam("Taunt", "On Taunt", SCRIPT_PARAM_ONOFF, true)
+		myMenu.anticc:addParam("Fear", "On Fear", SCRIPT_PARAM_ONOFF, true)
+		myMenu.anticc:addParam("Charm", "On Charm", SCRIPT_PARAM_ONOFF, true)
+		myMenu.anticc:addParam("Suppression", "On Suppression", SCRIPT_PARAM_ONOFF, true)
+		myMenu.anticc:addParam("Blind", "On Blind", SCRIPT_PARAM_ONOFF, true)
+		myMenu.anticc:addParam("KnockUp", "On Knock Up", SCRIPT_PARAM_ONOFF, true)
+		myMenu.anticc:addParam("info2", " ", SCRIPT_PARAM_INFO, "")
+		
+		myMenu.anticc:addParam("human", "Humanizer Delay", SCRIPT_PARAM_SLICE, 250, 0, 500, 0)
+end
+
+function ANTICC_OnApplyBuff(source, unit, buff)
+	if not buff or not source or not source.valid or not unit or not unit.valid then return end
+	
+	if ((myHero.health / myHero.maxHealth) * 100) >= myMenu.anticc.hp then return end
+	
+	if not ItemReady(3140) then return end
+	
+	if unit.isMe and myMenu.anticc.use then
+		needToRemove = false
+		if buff.type == 5 and myMenu.anticc.Stun then needToRemove = true end
+		if buff.type == 7 and myMenu.anticc.Silence then needToRemove = true end
+		if buff.type == 8 and myMenu.anticc.Taunt then needToRemove = true end
+		if buff.type == 10 and myMenu.anticc.Fear then needToRemove = true end
+		if buff.type == 21 and myMenu.anticc.Charm then needToRemove = true end
+		if buff.type == 24 and myMenu.anticc.Suppression then needToRemove = true end
+		if buff.type == 25 and myMenu.anticc.Blind then needToRemove = true end
+		if buff.type == 29 and myMenu.anticc.KnockUp then needToRemove = true end
+		
+		if needToRemove then
+			DelayAction(function()
+				local itemSlot = GetInventorySlotItem(3140)
+				CastSpell(itemSlot)
+			end, myMenu.anticc.human / 1000)
+		end
+	end
+end
+--
+--
+--END: Anti CC
 --
 --
 
@@ -315,6 +408,7 @@ function OnLoad()
 	SMITE_Menu()
 	IGNITE_Menu()
 	POTIONS_Menu()
+	ANTICC_Menu()
 end
 
 function OnDraw()
@@ -325,4 +419,8 @@ function OnTick()
 	if SMITE_Run() then return true end
 	if IGNITE_Run() then return true end
 	if PORIONS_Run() then return true end
+end
+
+function OnApplyBuff(source, unit, buff)
+	ANTICC_OnApplyBuff(source, unit, buff)
 end
