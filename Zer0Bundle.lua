@@ -6,11 +6,29 @@ Framework Features:
 -Smart targeting
 -Flee Mode
 
-Awareness
+Awareness:
 -Track summoner spell usage
 -Track when summoner changes summoner spells
 
+Orb Walker:
+-SAC:R Fully Supported
+-SxOrbWalk Fully Supported
+-Internal Orb Walk Fully Supported
+
 Champions
+Fiora:
+-Kite with Vitals (SAC + Sx + Internal Orbwalks supported)
+-Smart Q Gap Closing
+-Smart Q Vital Procing
+-E AA Resets
+-Auto W Logic
+-Combo: Q/E/R Usage
+-Harass: Q/E Usage
+-Lane Clear: Q/E Usage
+
+Fiora To Do:
+-Logic for kite R Target
+
 Fizz:
 -Use Q to dash out of danger spells
 -Use E to avoid spells we cant with Q
@@ -22,12 +40,6 @@ Fizz:
 Fizz To Do:
 -E2 Logic Checks
 -Q/E Options for distance to use (min and max)
-
----------------
-Fiora:
--Q Chase
--E AA Resets
--W Block Spells
 ]]--
 
 _G.ValidTarget = function(object, distance, enemyTeam)
@@ -36,9 +48,10 @@ _G.ValidTarget = function(object, distance, enemyTeam)
 end
 
 local supportedChamps = {
-	["Rengar"] = true,
-	["Fizz"] = true,
-	["Fiora"] = true
+	["Rengar"] = false,
+	["Fizz"] = false,
+	["Fiora"] = true,
+	["Blitzcrank"] = false
 }
 
 if not supportedChamps[myHero.charName] then
@@ -54,11 +67,13 @@ _G.zeroBundle = {
 	OrbWalk = nil,
 	Evade = nil,
 	WallJump = nil,
-	Prediction = nil
+	Prediction = nil,
+	MyOrbWalk = nil,
+	ItemManager = nil
 }
 
 _G.zeroSettings = {
-	debugging = true
+	debugging = false
 }
 
 local m = nil
@@ -93,6 +108,18 @@ function GetDamage(target, source, spell)
 		return 0
 	end
 end
+
+function GetNextPathPoint(t)
+	if t and not t.dead and t.visible and t.hasMovePath and t.pathCount >= 1 then
+		local Path = t:GetPath(1)
+		if Path then
+			if GetDistanceSqr(t, Path) > 30 * 30 then
+				return Path
+			end
+		end
+	end
+end
+
 --[[-----------------------------------------------------
 -------------------------REPORT--------------------------
 -----------------------------------------------------]]--
@@ -371,6 +398,10 @@ function MyItems:__init()
 		_G.zeroBundle.Menu.Items:addParam("tiamat", "Use Tiamat", SCRIPT_PARAM_ONOFF, true)
 		_G.zeroBundle.Menu.Items:addParam("titanic", "Use Titanic Hydra", SCRIPT_PARAM_ONOFF, true)
 		_G.zeroBundle.Menu.Items:addParam("ravenous", "Use Ravenous Hydra", SCRIPT_PARAM_ONOFF, true)
+	
+	_G.itemBuffs = {
+		["sheen"] = false
+	}
 end
 
 function MyItems:GetItemSlot(name)
@@ -411,6 +442,30 @@ function MyItems:GetWard()
 	return nil
 end
 
+function MyItems:OnApplyBuff(source, unit, buff)
+	if source.isMe and unit.isMe then
+		if buff.name == "sheen" then
+			PrettyPrint("Sheen Proc Active", true)
+			_G.itemBuffs["sheen"] = true
+		end
+	end
+end
+
+function MyItems:OnRemoveBuff(unit, buff)
+	if unit.isMe then
+		if buff.name == "sheen" then
+			PrettyPrint("Sheen Proc Used", true)
+			_G.itemBuffs["sheen"] = false
+		end
+	end
+end
+
+function MyItems:SheenDamage(b)
+	if b and _G.itemBuffs["sheen"] then
+		return b[myHero.level].ad
+	end
+	return 0
+end
 
 --[[-----------------------------------------------------
 -------------------ORB WALK SELECTOR---------------------
@@ -422,6 +477,7 @@ function OrbWalkManager:__init()
 	self.sacPDetected = false
 	self.sxDetected = false
 	self.pewDetected = false
+	self.internal = false
 	
 	if _G.Reborn_Loaded or _G.Reborn_Initialised or _G.AutoCarry ~= nil then
 		PrettyPrint("Detected SAC:R.", false)
@@ -430,11 +486,19 @@ function OrbWalkManager:__init()
 		end, 5)
 	elseif SAC then
 		PrettyPrint("Detected SAC:P.", false)
+		PrettyPrint("Full support for SAC:P not found.", false)
 		DelayAction(function()
 			self.sacPDetected = true
 		end, 5)
+	else
+		self.internal = true
+		_G.zeroBundle.MyOrbWalk = MyOrbwalk()
+		self.internal = true
+	end
+	--[[
 	elseif _Pewalk then
 		PrettyPrint("Detected Pewalk.", false)
+		PrettyPrint("Full support for Pewalk not found.", false)
 		DelayAction(function()
 			self.pewDetected = true
 		end, 5)
@@ -446,7 +510,7 @@ function OrbWalkManager:__init()
 		end, 5)
 	else
 		PrettyPrint("No orb walk detected!", false)
-	end
+	end]]--
 end
 
 function OrbWalkManager:Mode()
@@ -460,7 +524,22 @@ function OrbWalkManager:Mode()
 		elseif _G.AutoCarry.Keys.LastHit then
 			return "LastHit"
 		end
+	elseif self.sxDetected then
+		if _G.SxOrb.isFight then
+			return "Combo"
+		elseif _G.SxOrb.isHarass then
+			return "Harass"
+		elseif _G.SxOrb.isLaneClear then
+			return "LaneClear"
+		elseif _G.SxOrb.isLastHit then
+			return "LastHit"
+		end
+	elseif self.internal then
+		if _G.zeroBundle.Menu.Keys.carry then
+			return "Combo"
+		end
 	end
+	return nil
 end
 
 function OrbWalkManager:ResetAA()
@@ -488,6 +567,14 @@ function OrbWalkManager:EnableAA()
 		_Pewalk.AllowAttack(true)
 	elseif self.sxDetected then
 		_G.SxOrb:EnableAttacks()
+	end
+end
+
+function OrbWalkManager:ForcePoint(p)
+	if self.sxDetected then
+		_G.SxOrb:ForcePoint(p.x, p.z)
+	elseif self.sacDetected then
+		_G.AutoCarry.Orbwalker:OverrideOrbwalkLocation(p)
 	end
 end
 
@@ -571,10 +658,21 @@ function MyPrediction:AddW(t, d, r, w, s, c)
 end
 
 function PredictW(t, minHC)
-	if t and minHC and self.TQ and self.TP then
-		local CastPosition, HitChance= self.TP:GetPrediction(self.TW, t, myHero)
-		if CastPosition and (Hitchance and HitChance > minHC) then
-			return CastPosition
+	if _G.zeroBundle.Menu.Pred.rPred == 1 then
+		if t and minHC > 0 then
+			local CastPosition, HitChance, Position = VP:GetLineCastPosition(t, self.skillStore["W"].delay, self.skillStore["W"].width, self.skillStore["W"].speed, self.skillStore["W"].range, myHero, self.skillStore["W"].col)
+			if CastPosition and HitChance >= minHC and GetDistanceSqr(CastPosition) < self.skillStore["W"].range * self.skillStore["W"].range then
+				return CastPosition
+			end
+		end
+	elseif _G.zeroBundle.Menu.Pred.rPred == 2 then
+		if t and TP then
+			local CastPosition, HitChance, Info = TP:GetPrediction(TR_BindSS({type = 'IsLinear', delay = self.skillStore["W"].delay, range = self.skillStore["W"].range, width = self.skillStore["W"].width, speed = self.skillStore["W"].speed}), t, myHero)
+            if self.skillStore["W"].col and not Info then
+                return CastPosition, HitChance
+            elseif not self.skillStore["W"].col then
+                return CastPosition, HitChance
+            end
 		end
 	end
 	return nil
@@ -609,7 +707,7 @@ end
 
 function MyPrediction:PredictR(t, minHC)
 	if _G.zeroBundle.Menu.Pred.rPred == 1 then
-		PrettyPrint("Predicting r using vpred")
+		PrettyPrint("Predicting r using vpred", true)
 		if t and minHC > 0 then
 			local CastPosition, HitChance, Position = VP:GetLineCastPosition(t, self.skillStore["R"].delay, self.skillStore["R"].width, self.skillStore["R"].speed, self.skillStore["R"].range, myHero, self.skillStore["R"].col)
 			if CastPosition and HitChance >= minHC and GetDistanceSqr(CastPosition) < 1200 * 1200 then
@@ -626,7 +724,7 @@ function MyPrediction:PredictR(t, minHC)
             end
 		end
 	else
-		PrettyPrint("Predicting r using " .. _G.zeroBundle.Menu.Pred.rPred)
+		PrettyPrint("Predicting r using " .. _G.zeroBundle.Menu.Pred.rPred, true)
 	end
 	return nil
 end
@@ -694,6 +792,9 @@ function MyTarget:Update(mode)
 		self.jungle:update()
 	elseif mode == "Combo" then
 		self.champion:update()
+	elseif mode == "LaneClear" then
+		self.minion:update()
+		self.jungle:update()
 	end
 end
 
@@ -1293,50 +1394,6 @@ function MyEvade:__init()
 				canSheild = true,
 				dangerLevel = 2,
 				missle = "MissileBarrageMissile2"
-			}
-		},
-		["Darius"] = {
-			["DariusCleave"] = {
-				needsDelay = false,
-				evadeDelay = 0,
-				range = 0,
-				width = 375,
-				danger = false,
-				spellType = "circle",
-				aoe = true,
-				speed = math.huge,
-				delay = 0.75,
-				name = "Darius Cleave",
-				spell = _Q,
-				pretty = "Q",
-				canWall = false,
-				canDash = true,
-				canEvade = true,
-				canSpellSheild = true,
-				canSheild = true,
-				dangerLevel = 2,
-				missle = "DariusCleave"
-			},
-			["DariusAxeGrabCone"] = {
-				needsDelay = false,
-				evadeDelay = 0,
-				range = 550,
-				width = 80,
-				danger = false,
-				spellType = "cone",
-				aoe = true,
-				speed = math.huge,
-				delay = 0.75,
-				name = "Darius Axe Grab",
-				spell = _R,
-				pretty = "R",
-				canWall = false,
-				canDash = true,
-				canEvade = true,
-				canSpellSheild = true,
-				canSheild = true,
-				dangerLevel = 4,
-				missle = "DariusAxeGrabCone"
 			}
 		},
 		["Darius"] = {
@@ -2661,6 +2718,243 @@ function MyEvade:__init()
 				dangerLevel = 3
 			}
 		},
+		["Lux"] = {
+			["LuxLightBinding"] = {
+				needsDelay = false,
+				evadeDelay = 0,
+				range = 1300,
+				width = 70,
+				danger = true,
+				spellType = "line",
+				aoe = true,
+				speed = 1200,
+				delay = 0.25,
+				name = "Lux Q",
+				spell = _Q,
+				pretty = "Q",
+				canWall = true,
+				canDash = true,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true,
+				missle = "LuxLightBindingMis",
+				dangerLevel = 4
+			},
+			["LuxLightStrikeKugel"] = {
+				needsDelay = false,
+				evadeDelay = 0,
+				range = 1100,
+				width = 275,
+				danger = false,
+				spellType = "circle",
+				aoe = true,
+				speed = 1300,
+				delay = 0.25,
+				name = "Lux E",
+				spell = _R,
+				pretty = "R",
+				canWall = true,
+				canDash = true,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true,
+				missle = "LuxLightStrikeKugel",
+				dangerLevel = 2
+			}
+		},
+		["Morgana"] = {
+			["DarkBindingMissile"] = {
+				needsDelay = false,
+				evadeDelay = 0,
+				range = 1300,
+				width = 80,
+				danger = true,
+				spellType = "line",
+				aoe = false,
+				speed = 1200,
+				delay = 0.25,
+				name = "Morgana Q",
+				spell = _Q,
+				pretty = "Q",
+				canWall = true,
+				canDash = true,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true,
+				missle = "DarkBindingMissile",
+				dangerLevel = 4
+			}
+		},
+		["Nami"] = {
+			["NamiQ"] = {
+				needsDelay = false,
+				evadeDelay = 0,
+				range = 1625,
+				width = 150,
+				danger = true,
+				spellType = "circle",
+				aoe = true,
+				speed = math.huge,
+				delay = 0.95,
+				name = "Nami Q",
+				spell = _Q,
+				pretty = "Q",
+				canWall = true,
+				canDash = true,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true,
+				missle = "namiqmissile",
+				dangerLevel = 4
+			},
+			["NamiR"] = {
+				needsDelay = false,
+				evadeDelay = 0,
+				range = 2750,
+				width = 260,
+				danger = true,
+				spellType = "line",
+				aoe = true,
+				speed = 850,
+				delay = 0.5,
+				name = "Nami R",
+				spell = _R,
+				pretty = "R",
+				canWall = true,
+				canDash = true,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true,
+				missle = "NamiRMissile",
+				dangerLevel = 4
+			}
+		},
+		["Nautilus"] = {
+			["NautilusAnchorDrag"] = {
+				needsDelay = false,
+				evadeDelay = 0,
+				range = 1250,
+				width = 90,
+				danger = true,
+				spellType = "line",
+				aoe = false,
+				speed = 2000,
+				delay = 0.25,
+				name = "Nautilus Q",
+				spell = _Q,
+				pretty = "Q",
+				canWall = true,
+				canDash = true,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true,
+				missle = "NautilusAnchorDragMissile",
+				dangerLevel = 3
+			}
+		},
+		["Nocturne"] = {
+			["NocturneDuskbringer"] = {
+				needsDelay = false,
+				evadeDelay = 0,
+				range = 1125,
+				width = 60,
+				danger = false,
+				spellType = "line",
+				aoe = false,
+				speed = 1400,
+				delay = 0.25,
+				name = "Nocturne Q",
+				spell = _Q,
+				pretty = "Q",
+				canWall = true,
+				canDash = true,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true,
+				missle = "NocturneDuskbringer",
+				dangerLevel = 2
+			}
+		},
+		["Nidalee"] = {
+			["JavelinToss"] = {
+				needsDelay = false,
+				evadeDelay = 0,
+				range = 1500,
+				width = 40,
+				danger = false,
+				spellType = "line",
+				aoe = false,
+				speed = 1300,
+				delay = 0.25,
+				name = "Nidalee Q",
+				spell = _Q,
+				pretty = "Q",
+				canWall = true,
+				canDash = true,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true,
+				missle = "JavelinToss",
+				dangerLevel = 2
+			}
+		},
+		["Olaf"] = {
+			["OlafAxeThrowCast"] = {
+				needsDelay = false,
+				evadeDelay = 0,
+				range = 1000,
+				width = 105,
+				danger = false,
+				spellType = "line",
+				aoe = false,
+				speed = 1600,
+				delay = 0.25,
+				name = "Olaf Q",
+				spell = _Q,
+				pretty = "Q",
+				canWall = true,
+				canDash = true,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true,
+				missle = "olafaxethrow",
+				dangerLevel = 2
+			}
+		},
+		["Garen"] = {
+			["GarenQAttack"] = {
+				needsDelay = false,
+				evadeDelay = 0.125,
+				range = 0,
+				danger = true,
+				spellType = "target",
+				delay = 0.15,
+				name = "Garen Q",
+				spell = _Q,
+				pretty = "Q",
+				canWall = false,
+				canDash = false,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true
+			},
+			["GarenR"] = {
+				needsDelay = false,
+				evadeDelay = 0.125,
+				range = 0,
+				danger = true,
+				spellType = "target",
+				delay = 0.15,
+				name = "Garen R",
+				spell = _R,
+				pretty = "R",
+				canWall = false,
+				canDash = false,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true
+			}
+		},
 		["Warwick"] = {
 			["WarwickRChannel"] = {
 				needsDelay = false,
@@ -2672,6 +2966,42 @@ function MyEvade:__init()
 				name = "Warwick R",
 				spell = _R,
 				pretty = "R",
+				canWall = false,
+				canDash = false,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true
+			}
+		},
+		["Teemo"] = {
+			["BlindingDart"] = {
+				needsDelay = false,
+				evadeDelay = 0.125,
+				range = 0,
+				danger = true,
+				spellType = "target",
+				delay = 0.15,
+				name = "Teemo Q",
+				spell = _Q,
+				pretty = "Q",
+				canWall = true,
+				canDash = false,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true
+			}
+		},
+		["Fiddlesticks"] = {
+			["Terrify"] = {
+				needsDelay = false,
+				evadeDelay = 0.125,
+				range = 0,
+				danger = true,
+				spellType = "target",
+				delay = 0.15,
+				name = "Fiddlesticks Q",
+				spell = _Q,
+				pretty = "Q",
 				canWall = false,
 				canDash = false,
 				canEvade = true,
@@ -2800,6 +3130,11 @@ function MyEvade:OnProcessSpell(unit, spell)
 					if _G.zeroBundle.Champion.champData.useWall and eS.canWall then
 						_G.zeroBundle.Champion:Wall(spell, eS, unit, myHero)
 					end
+					if not handled and eS.canEvade and _G.zeroBundle.Champion.champData.useEvade then
+						if _G.zeroBundle.Champion:Evade(spell, eS, unit, myHero) then
+							handled = true
+						end
+					end
 				elseif eS.spellType == "circle" then
 					if self:WillAoEHit(eS, spell, unit, myHero) == true then
 						handled = false
@@ -2899,7 +3234,7 @@ function MyEvade:OnProcessSpell(unit, spell)
 			end
 		else
 			if spell and unit and spell.target and spell.target == myHero then
-				PrettyPrint("Detected target spell from " .. unit.charName .. " spell: " .. spell.name)
+				PrettyPrint("Detected target spell from " .. unit.charName .. " spell: " .. spell.name, true)
 			end
 		end
 	
@@ -3015,6 +3350,110 @@ end
 
 function MyEvade:WillAoEHit(spellInfo, spell, from, target)
 	if checkhitaoe(from, spell.endPos, spellInfo.width, spellInfo.range, target, target.boundingRadius or 65) then return true end
+	return false
+end
+
+--[[-----------------------------------------------------
+----------------------ORBWALKER--------------------------
+-----------------------------------------------------]]--
+local trueAARange = myHero.range + 65
+local lastAA = GetTickCount()
+local lastWindUp = 0
+local lastAACD = 0
+
+class("MyOrbwalk")
+function MyOrbwalk:__init()
+	trueAARange = myHero.range + 65
+	lastAA = GetTickCount()
+	lastWindUp = 0
+	lastAACD = 0
+	
+	self.enabled = true
+	
+	self.ts = TargetSelector(TARGET_LESS_CAST_PRIORITY, trueAARange, DAMAGE_PHYSICAL, false)
+	self.allyMinionTS = minionManager(MINION_ALLY, 2000, myHero, MINION_SORT_HEALTH_ASC)
+	self.enemyMinionTS = minionManager(MINION_ENEMY, 2000, myHero, MINION_SORT_HEALTH_ASC)
+	self.ts.name = "Zer0 Orb Walker"
+	
+	self.minionInfo = {}
+	self.minionInfo[(myHero.team == 100 and "Blue" or "Red").."_Minion_Basic"] =      { aaDelay = 400, projSpeed = 0    }
+	self.minionInfo[(myHero.team == 100 and "Blue" or "Red").."_Minion_Caster"] =     { aaDelay = 484, projSpeed = 0.68 }
+	self.minionInfo[(myHero.team == 100 and "Blue" or "Red").."_Minion_Wizard"] =     { aaDelay = 484, projSpeed = 0.68 }
+	self.minionInfo[(myHero.team == 100 and "Blue" or "Red").."_Minion_MechCannon"] = { aaDelay = 365, projSpeed = 1.18 }
+	self.minionInfo.obj_AI_Turret =                                         { aaDelay = 150, projSpeed = 1.14 }
+	
+	self.aaRefresh = {"PowerFist", "DariusNoxianTacticsONH", "Takedown", "Ricochet", "BlindingDart", "VayneTumble", "JaxEmpowerTwo", "MordekaiserMaceOfSpades", "SiphoningStrikeNew", "RengarQ", "MonkeyKingDoubleAttack", "YorickSpectral", "ViE", "GarenSlash3", "HecarimRamp", "XenZhaoComboTarget", "LeonaShieldOfDaybreak", "ShyvanaDoubleAttack", "shyvanadoubleattackdragon", "TalonNoxianDiplomacy", "TrundleTrollSmash", "VolibearQ", "PoppyDevastatingBlow"}
+	self.extraAAs = {"frostarrow", "CaitlynHeadshotMissile", "QuinnWEnhanced", "TrundleQ", "GarenSlash2", "RenektonExecute", "RenektonSuperExecute"}
+	
+	_G.zeroBundle.Menu:addSubMenu(">> OrbWalk Settings <<", "OrbWalk")
+		_G.zeroBundle.Menu.Keys:addParam("carry", "Auto Carry", SCRIPT_PARAM_ONKEYDOWN, false, string.byte(" "))
+		_G.zeroBundle.Menu.Keys:addParam("lastHit", "Last Hit", SCRIPT_PARAM_ONKEYDOWN, false, string.byte("X"))
+		_G.zeroBundle.Menu.Keys:addParam("harass", "Harass", SCRIPT_PARAM_ONKEYDOWN, false, string.byte("C"))
+		_G.zeroBundle.Menu.Keys:addParam("laneClear", "Lane Clear", SCRIPT_PARAM_ONKEYDOWN, false, string.byte("V"))
+		_G.zeroBundle.Menu.OrbWalk:addTS(self.ts)
+end
+
+function MyOrbwalk:OnProcessSpell(object, spell)
+	if myHero.dead then return false end
+	
+	if object.isMe and (spell.name:lower():find("attack") or self:ExtraAAs(spell)) then
+		lastAA = GetTickCount() - GetLatency() / 2
+		lastWindUp = spell.windUpTime * 1000
+		lastAACD = spell.animationTime * 1000
+	elseif object.isMe and self:RefreshAAs(spell) then
+		lastAA = GetTickCount() - GetLatency() / 2 - lastAACD
+	end
+end
+
+function MyOrbwalk:OnTick()
+	trueAARange = myHero.range + GetDistance(myHero.minBBox)
+	self.ts.range = trueAARange
+	self.ts:update()
+	
+	if myHero.dead then return false end
+	
+	if _G.zeroBundle.Menu.Keys.carry then
+		if self:TimeToAttack() and self.ts.target and ValidTarget(self.ts.target, self.trueAARange) then
+			myHero:Attack(self.ts.target)
+		elseif self.TimeToMove() then
+			self:MoveToCursor()
+		end
+	end
+end
+
+function MyOrbwalk:TimeToMove()
+	if GetTickCount() + GetLatency() / 2 > lastAA + lastWindUp + 35 then
+		return true
+	end
+	return false
+end
+
+function MyOrbwalk:TimeToAttack()
+	return (GetTickCount() + GetLatency() / 2 > lastAA or 0 + lastAACDlastAACDlastAACD or 0)
+end
+
+function MyOrbwalk:MoveToCursor()
+	if GetDistanceSqr(mousePos) > 50 * 50 then
+		local moveToPos = myHero + (Vector(mousePos) - myHero):normalized() * 300
+		myHero:MoveTo(moveToPos.x, moveToPos.z)
+	end
+end
+
+function MyOrbwalk:ExtraAAs(s)
+	for _, a in pairs(self.extraAAs) do
+		if s.name == a then
+			return true
+		end
+	end
+	return false
+end
+
+function MyOrbwalk:RefreshAAs(s)
+	for _, a in pairs(self.aaRefresh) do
+		if s.name == a then
+			return true
+		end
+	end
 	return false
 end
 
@@ -3479,12 +3918,6 @@ end
 --[[-----------------------------------------------------
 ----------------------CHAMP FIORA------------------------
 -----------------------------------------------------]]--
---[[
-SE - Left
-NE - Top
-SW - Down
-NW - Right
-]]--
 class("ChampFiora")
 function ChampFiora:__init()
 	
@@ -3584,7 +4017,7 @@ function ChampFiora:__init()
 	self.aaRange = myHero.range + myHero.boundingRadius
 	
 	self.abilityQ = {
-		range = 500,
+		range = 600,
 		delay = 0.2
 	}
 	
@@ -3607,12 +4040,16 @@ function ChampFiora:__init()
 		end
 	end
 	
+	self.vitalKitePosition = nil
+	self.vitalKiteTarget = nil
+	
 	self.target = MyTarget(625, 650, 650, DAMAGE_MAGIC)
 	
 	_G.zeroBundle.Menu:addSubMenu(">> Combo Settings <<", "Combo")
 		_G.zeroBundle.Menu.Combo:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, true)
 		_G.zeroBundle.Menu.Combo:addParam("e", "Use E", SCRIPT_PARAM_ONOFF, true)
 		_G.zeroBundle.Menu.Combo:addParam("r", "Use R", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("kiteVitals", "Kite Vitals", SCRIPT_PARAM_ONOFF, true)
 	
 	_G.zeroBundle.Menu:addSubMenu(">> Harass Settings <<", "Harass")
 		_G.zeroBundle.Menu.Harass:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, false)
@@ -3629,7 +4066,12 @@ function ChampFiora:__init()
 		_G.zeroBundle.Menu.Pred:addParam("wPred", "W Prediction", SCRIPT_PARAM_LIST, 1, {"VPred", "TRPred", "KPred"})
 	
 	
-	PrettyPrint("Loaded: <b>Fiora - Duel Me Bitch</b>", false)
+	PrettyPrint("Loaded: <b>Fiora - Duel Me Bitch</b> <b>*BETA*</b>", false)
+	DelayAction(function()
+		if _G.zeroBundle.OrbWalk.sacDetected then
+			DelayAction(function() PrettyPrint("Please make sure to disable Stick To Target in SAC:R settings. This script will kite with vitals/auto stick to target.", false) end, 10)
+		end
+	end, 15)
 end
 
 function ChampFiora:DrawVital(t)
@@ -3668,9 +4110,11 @@ end
 function ChampFiora:Combo()
 	target = self.bTarget
 	if target and not target.dead and target.health > 0 and ValidTarget(target) then
+		self:KiteWithTargetVitals(target)
+		
 		tD = GetDistanceSqr(target)
 		
-		if _G.zeroBundle.Menu.Combo.r and tD < self.abilityR.range * self.abilityR.range and spellReady(_R) and target.health < self:RDamage(target) and not self:TargetHasVital(target) then
+		if _G.zeroBundle.Menu.Combo.r and tD < self.abilityR.range * self.abilityR.range and spellReady(_R) and target.health < self:RDamage(target) and not self:TargetHasVital(target) and not UnderTower(target) then
 			CastSpell(_R, target)
 			return true
 		end
@@ -3701,21 +4145,109 @@ function ChampFiora:GetVitalOffset(t)
 		return {x = -85, z = 0 }
 	elseif self.vitalMarks[t.charName].SW == true then
 		return {x = 0, z = -85 }
+	else
+		return nil
+	end
+end
+
+function ChampFiora:NewKiteOffet(t)
+	r = math.random(1,4)
+	if r == 1 then
+		return {x = t.pos.x + 0, z = t.pos.z + 85 }
+	elseif r == 2 then
+		return {x = t.pos.x + 85, z = t.pos.z + 0 }
+	elseif r == 3 then
+		return {x = t.pos.x + -85, z = t.pos.z + 0 }
+	elseif r == 4 then
+		return {x = t.pos.x + 0, z = t.pos.z + -85 }
+	else
+		return nil
 	end
 end
 
 function ChampFiora:Harass()
+	self:ResetKiteWithVitals()
 	target = self.bTarget
 	if target and not target.dead and target.health > 0 and ValidTarget(target) then
-		
+		if self:TargetHasVital(target) and spellReady(_Q) and spellReady(_E) then
+			oS = self:GetVitalOffset(target)
+			nX = target.pos.x + oS.x
+			nZ = target.pos.z + oS.z
+			nV = Vector(nX, target.pos.y, nZ)
+			if GetDistanceSqr(nV) < self.abilityQ.range * self.abilityQ.range then
+				CastSpell(_Q, nX, nZ)
+				return true
+			end
+		end
 	end
 end
 
 function ChampFiora:KiteWithTargetVitals(t)
+	if not _G.zeroBundle.Menu.Combo.kiteVitals then return false end
 	
+	if self.vitalKitePosition then
+		if GetDistanceSqr(self.vitalKitePosition) > 450 then
+			self.vitalKitePosition = nil
+			self.vitalKiteTarget = nil
+			_G.zeroBundle.OrbWalk:ForcePoint(nil)
+		end
+	end
+	
+	if t and ValidTarget(t, 450) then
+		if self:TargetHasVital(t) then
+			vO = self:GetVitalOffset(t)
+			if vO ~= nil then
+				nX = t.pos.x + vO.x
+				nZ = t.pos.z + vO.z
+				vKP = Vector(nX, t.y, nZ)
+				mV = Vector(myHero.x, myHero.y, myHero.z)
+				if mV:dist(vKP) < 450 then
+					self.vitalKiteTarget = t
+					self.vitalKitePosition = vKP
+					_G.zeroBundle.OrbWalk:ForcePoint(vKP)
+					PrettyPrint("Kiting Target: [" .. t.charName .. "]", true)
+				else
+					self.vitalKitePosition = nil
+					self.vitalKiteTarget = nil
+					_G.zeroBundle.OrbWalk:ForcePoint(nil)
+					PrettyPrint("Kiting Target: [Reset E:1]", true)
+				end
+			else
+				self.vitalKitePosition = nil
+				self.vitalKiteTarget = nil
+				_G.zeroBundle.OrbWalk:ForcePoint(nil)
+				PrettyPrint("Kiting Target: [Reset E:2]", true)
+			end
+		else
+			p = GetNextPathPoint(t)
+			if p then
+				if GetDistanceSqr(p) < 80 then
+					nP = self:NewKiteOffet(t)
+					p = Vector(p.x + nP.x, t.pos.y, p.z + nP.z)
+				end
+				self.vitalKiteTarget = t
+				self.vitalKitePosition = p
+				_G.zeroBundle.OrbWalk:ForcePoint(p)
+				PrettyPrint("Kiting Target: [" .. t.charName .. "]", true)
+			end
+		end
+	else
+		self.vitalKitePosition = nil
+		self.vitalKiteTarget = nil
+		_G.zeroBundle.OrbWalk:ForcePoint(nil)
+		PrettyPrint("Kiting Target: [Reset E:3]", true)
+	end
+end
+
+function ChampFiora:ResetKiteWithVitals()
+	self.vitalKitePosition = nil
+	self.vitalKiteTarget = nil
+	_G.zeroBundle.OrbWalk:ForcePoint(nil)
 end
 
 function ChampFiora:LaneClear()
+	self:ResetKiteWithVitals()
+	self.target:Update("LaneClear")
 	if _G.zeroBundle.Menu.Keys.harassLaneClear then
 		self:Harass()
 	end
@@ -3723,10 +4255,10 @@ function ChampFiora:LaneClear()
 	for _,m in pairs(self.target.minion.objects) do
 		if m and ValidTarget(m) then
 			mR = GetDistanceSqr(m)
-			if _G.zeroBundle.Menu.LaneClear.q and mR < self.abilityQ.range and self:QDamage(m) > m.health and mR > self.aaRange * 1.25 then
+			if _G.zeroBundle.Menu.LaneClear.q and mR < self.abilityQ.range * self.abilityQ.range and self:QDamage(m) > m.health and mR > (self.aaRange * 1.3) * (self.aaRange * 1.3) then
 				CastSpell(_Q, m.x, m.z)
 				return true
-			elseif _G.zeroBundle.Menu.LaneClear.e and mR <= self.aaRange and self:EDamage(m) > m.health then
+			elseif _G.zeroBundle.Menu.LaneClear.e and mR <= self.aaRange * self.aaRange and self:EDamage(m) > m.health then
 				CastSpell(_E)
 				myHero:Attack(m)
 				return true
@@ -3740,25 +4272,34 @@ function ChampFiora:JungleClear()
 end
 
 function ChampFiora:LastHit()
-	
+	self:ResetKiteWithVitals()
 end
 
 function ChampFiora:TargetHasVital(t)
-	if self.vitalMarks[target.charName].NE or self.vitalMarks[target.charName].NW or self.vitalMarks[target.charName].SE or self.vitalMarks[target.charName].SW then
+	if not t then return end
+	if self.vitalMarks[t.charName].NE or self.vitalMarks[t.charName].NW or self.vitalMarks[t.charName].SE or self.vitalMarks[t.charName].SW then
 		return true
 	end
 	return false
 end
 
+function ChampFiora:ResetVitals()
+	for _, t in pairs(GetEnemyHeroes()) do
+		if t then
+			if t and (t.dead or not t.visible or GetDistanceSqr(t) > 1200 * 1200 or myHero.dead) then
+				--PrettyPrint("Resetting vitals for [" .. t.charName .. "]", true)
+				self.vitalMarks[t.charName].NE = false
+				self.vitalMarks[t.charName].NW = false
+				self.vitalMarks[t.charName].SE = false
+				self.vitalMarks[t.charName].SW = false
+			end
+		end
+	end
+end
+
 function ChampFiora:OnCreateObj(object)
 	on = object.name
 	if object and object.valid and on:find("Fiora_Base_Passive") then
-		if object.spellOwner then
-			print("Owner: " .. object.spellOwner.charName)
-		end
-		if object.spellName then
-			print("Name: " .. object.spellName)
-		end
 		closest = nil
 		closestDist = nil
 		for _,e in pairs(GetEnemyHeroes()) do
@@ -3809,7 +4350,8 @@ end
 
 function ChampFiora:OnDeleteObj(object)
 	on = object.name
-	if object and object.valid and on:find("Fiora_Base_Passive") then
+	if object and on:find("Fiora_Base_Passive") then
+		print("found passive")
 		closest = nil
 		closestDist = nil
 		for _,e in pairs(GetEnemyHeroes()) do
@@ -3842,7 +4384,9 @@ function ChampFiora:OnDeleteObj(object)
 end
 
 function ChampFiora:OnApplyBuff(source, unit, buff)
-	
+	--[[if source and unit and buff and source.isMe then
+		PrettyPrint("New buff [" .. unit.charName .. "] [" .. buff.name .. "]", true)
+	end]]--
 end
 
 function ChampFiora:OnRemoveBuff(unit, buff)
@@ -3860,12 +4404,7 @@ end
 function ChampFiora:OnTick()
 	self.target:Update("Combo")
 	self.bTarget = self.target:ComboTarget()
-	
-	if self.isInE then
-		if self.bTarget and ValidTarget(self.bTarget) and GetDistanceSqr(self.bTarget) < self.abilityE.range * self.abilityE.range then
-			CastSpell(_E, self.bTarget.x, self.bTarget.z)
-		end
-	end
+	self:ResetVitals()
 end
 
 function ChampFiora:OnProcessAttack(unit, spell)
@@ -3890,13 +4429,13 @@ function ChampFiora:OnProcessAttack(unit, spell)
 		if unit and spell and unit.team ~= myHero.team and unit.type == myHero.type and spell.target and spell.target == myHero and spellReady(_W) then
 			if spell.name:find("SummonerDot") then
 				CastSpell(_W, unit.x, unit.z)
-				PrettyPrint("Auto Parrying [Ignite].")
+				PrettyPrint("Auto Parrying [Ignite].", true)
 				return true
 			end
 			--Check AA Buffs (Fizz W, Fiora E, etc
 			if spell.name:lower():find("attack") or spell.name:lower():find("crit") and getDmg("AD", myHero, target) >= myHero.health then
 				CastSpell(_W, unit.x, unit.z)
-				PrettyPrint("Auto Parrying [Killing Blow].")
+				PrettyPrint("Auto Parrying [Killing Blow].", true)
 				return true
 			end
 		end
@@ -3906,10 +4445,23 @@ end
 function ChampFiora:Evade(spell, eS, unit, myHero)
 	if spellReady(_W) then
 		if self.bTarget and ValidTarget(self.bTarget) and GetDistanceSqr(self.bTarget) <= self.abilityW.range * self.abilityW.range then
+			w = _G.zeroBundle.Prediction:PredictW(target, 1)
+			if w then
+				CastSpell(_W, w.x, w.z)
+				return true
+			end
 			CastSpell(_W, self.bTarget.x, self.bTarget.z)
-		else
-			CastSpell(_W, myHero.x, myHero.z)
+			return true
 		end
+		
+		for _, e in pairs(GetEnemyHeroes()) do
+			if e and ValidTarget(e) and GetDistanceSqr(e) <= self.abilityW.range * self.abilityW.range then
+				CastSpell(_W, e.x, e.z)
+				return true
+			end
+		end
+		
+		CastSpell(_W, myHero.x, myHero.z)
 		return true
 	end
 	return false
@@ -3930,12 +4482,12 @@ function ChampFiora:WallJump(from, to)
 end
 
 function ChampFiora:GetDamage(t)
-	return math.ceil(self:RDamage(t) + self:EDamage(t) + self:WDamage(t) + self:QDamage(t) + self:PassiveDamage(t))
+	return math.ceil(self:RDamage(t) + self:EDamage(t) + self:WDamage(t) + self:QDamage(t) + self:PassiveDamage(t) + _G.zeroBundle.ItemManager:SheenDamage(self.baseStats))
 end
 
 function ChampFiora:RDamage(t)
 	if spellReady(_R) then
-		return self:PassiveDamage(t) * 2
+		return self:PassiveDamage(t) * 4
 	else
 		return 0
 	end
@@ -4034,6 +4586,312 @@ function ChampFiora:GetBonusAD()
 	return myHero.damage - self.baseStats[myHero.level].ad
 end
 
+function ChampFiora:CanWeDiveThem(pos, t)
+	if pos and t then
+		if UnderTower(pos) then
+			if myHero.health < myHero.maxHealth / 2 then
+				return false
+			end
+			if t.health > self:GetDamage(t) then
+				return false
+			end
+			return true
+		else
+			return true
+		end
+	end
+	return false
+end
+
+--[[-----------------------------------------------------
+-----------------------CHAMP ZOE-------------------------
+-----------------------------------------------------]]--
+class("ChampZoe")
+function ChampZoe:__init()
+	
+	self.champData = {
+		useAutoMode = false,
+		useFleeMode = false,
+		useProcessSpell = false,
+		useApplyBuff = false,
+		useRemoveBuff = false,
+		useCreateObj = false,
+		useDeleteObj = false,
+		useProcessAttack = false,
+		useEvade = false,
+		useEvadeDash = false,
+		useSheild = false,
+		useWall = false
+	}
+	
+	self.bTarget = nil
+	
+	self.aaRange = myHero.range + myHero.boundingRadius
+	
+	self.abilityQ = {
+		range = 600,
+		delay = 0.2
+	}
+	
+	self.abilityW = {
+		range = 725,
+		delay = 0.5,
+		width = 70,
+		speed = 3200,
+		type = 'IsLinear'
+	}
+		
+	self.abilityR = {
+		range = 500
+	}
+	
+	self.vitalKitePosition = nil
+	self.vitalKiteTarget = nil
+	
+	self.target = MyTarget(625, 650, 650, DAMAGE_MAGIC)
+	
+	_G.zeroBundle.Menu:addSubMenu(">> Combo Settings <<", "Combo")
+		_G.zeroBundle.Menu.Combo:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("e", "Use E", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("r", "Use R", SCRIPT_PARAM_ONOFF, true)
+	
+	_G.zeroBundle.Menu:addSubMenu(">> Harass Settings <<", "Harass")
+		_G.zeroBundle.Menu.Harass:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, false)
+		_G.zeroBundle.Menu.Harass:addParam("e", "Use E", SCRIPT_PARAM_ONOFF, false)
+	
+	_G.zeroBundle.Menu:addSubMenu(">> Lane Clear Settings <<", "LaneClear")
+		_G.zeroBundle.Menu.LaneClear:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.LaneClear:addParam("e", "Use E", SCRIPT_PARAM_ONOFF, true)
+		
+	_G.zeroBundle.Menu:addSubMenu(">> Flee Settings <<", "Flee")
+		_G.zeroBundle.Menu.Flee:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, true)
+		
+	_G.zeroBundle.Menu:addSubMenu(">> Prediction <<", "Pred")
+		_G.zeroBundle.Menu.Pred:addParam("wPred", "W Prediction", SCRIPT_PARAM_LIST, 1, {"VPred", "TRPred", "KPred"})
+	
+	
+	PrettyPrint("Loaded: <b>Zoe - WTF Is This Champ</b>", false)
+end
+
+function ChampZoe:KillSteal()
+	--[[
+	for _,e in pairs(GetEnemyHeroes()) do
+		if e and ValidTarget(e) then
+			eD = GetDistanceSqr(e)
+			if eD < self.aaRange and spellReady(_E) and self:EDamage(e) > e.health then
+				CastSpell(_E, e.x, e.z)
+				myHero:Attack(e)
+				return true
+			elseif eD < self.abilityQ.range and spellReady(_Q) and self:QDamage(e) > e.health then
+				CastSpell(_Q, e.z, e.z)
+				return true
+			end
+		end
+	end
+	]]--
+end
+
+function ChampZoe:SetupSkills()
+	--_G.zeroBundle.Prediction:AddR(self.abilityR.type, self.abilityR.delay, self.abilityR.range, self.abilityR.width, self.abilityR.speed, self.abilityR.col)
+end
+
+function ChampZoe:Combo()
+	target = self.bTarget
+	if target and not target.dead and target.health > 0 and ValidTarget(target) then
+		self:KiteWithTargetVitals(target)
+		
+		tD = GetDistanceSqr(target)
+		
+		if _G.zeroBundle.Menu.Combo.r and tD < self.abilityR.range * self.abilityR.range and spellReady(_R) and target.health < self:RDamage(target) and not self:TargetHasVital(target) then
+			CastSpell(_R, target)
+			return true
+		end
+		
+		if _G.zeroBundle.Menu.Combo.q and tD < self.abilityQ.range * self.abilityQ.range and spellReady(_Q) and self:TargetHasVital(target) then
+			vO = self:GetVitalOffset(target)
+			if vO then
+				newX = target.x + vO.x
+				newZ = target.z + vO.z
+				CastSpell(_Q, newX, newZ)
+				return true
+			end
+		end
+		
+		if _G.zeroBundle.Menu.Combo.q and tD > self.aaRange * self.aaRange and spellReady(_Q) and not spellReady(_E) and not self:TargetHasVital(target) then
+			CastSpell(_Q, target.x, target.z)
+			return true
+		end
+	end
+end
+
+function ChampZoe:Harass()
+	self:ResetKiteWithVitals()
+	target = self.bTarget
+	if target and not target.dead and target.health > 0 and ValidTarget(target) then
+		
+	end
+end
+
+function ChampZoe:LaneClear()
+	self:ResetKiteWithVitals()
+	self.target:Update("LaneClear")
+	if _G.zeroBundle.Menu.Keys.harassLaneClear then
+		self:Harass()
+	end
+	
+	for _,m in pairs(self.target.minion.objects) do
+		if m and ValidTarget(m) then
+			mR = GetDistanceSqr(m)
+			if _G.zeroBundle.Menu.LaneClear.q and mR < self.abilityQ.range * self.abilityQ.range and self:QDamage(m) > m.health and mR > self.aaRange * 1.25 then
+				CastSpell(_Q, m.x, m.z)
+				return true
+			elseif _G.zeroBundle.Menu.LaneClear.e and mR <= self.aaRange * self.aaRange and self:EDamage(m) > m.health then
+				CastSpell(_E)
+				myHero:Attack(m)
+				return true
+			end
+		end
+	end
+end
+
+function ChampZoe:JungleClear()
+	
+end
+
+function ChampZoe:LastHit()
+	
+end
+
+function ChampZoe:OnCreateObj(object)
+	
+end
+
+function ChampZoe:OnDeleteObj(object)
+	
+end
+
+function ChampZoe:OnApplyBuff(source, unit, buff)
+	
+end
+
+function ChampZoe:OnRemoveBuff(unit, buff)
+	
+end
+
+function ChampZoe:OnDraw()
+	
+end
+
+function ChampZoe:OnTick()
+	self.target:Update("Combo")
+	self.bTarget = self.target:ComboTarget()
+end
+
+function ChampZoe:Evade(spell, eS, unit, myHero)
+	return false
+end
+
+function ChampZoe:EvadeDash(spell, eS, unit, hero)
+	return false
+end
+
+function ChampZoe:GetDamage(t)
+	return math.ceil(self:RDamage(t) + self:EDamage(t) + self:WDamage(t) + self:QDamage(t) + self:PassiveDamage(t))
+end
+
+function ChampZoe:RDamage(t)
+	if spellReady(_R) then
+		return self:PassiveDamage(t) * 2
+	else
+		return 0
+	end
+end
+
+function ChampZoe:EDamage(t)
+	if spellReady(_E) then
+		return myHero:CalcDamage(t, getDmg("AD", t, myHero) * 2)
+	else
+		return 0
+	end
+end
+
+function ChampZoe:WDamage(t)
+	if spellReady(_W) then
+		dmg = 0
+		if myHero:GetSpellData(_W).level == 1 then
+			dmg = 90 + (myHero.ap)
+		elseif myHero:GetSpellData(_W).level == 2 then
+			dmg = 130 + myHero.ap
+		elseif myHero:GetSpellData(_W).level == 3 then
+			dmg = 170 + myHero.ap
+		elseif myHero:GetSpellData(_W).level == 4 then
+			dmg = 210 + myHero.ap
+		elseif myHero:GetSpellData(_W).level == 5 then
+			dmg = 250 + myHero.ap
+		end
+		fD = myHero:CalcMagicDamage(t, dmg)
+		return fD
+	else
+		return 0
+	end
+end
+
+function ChampZoe:QDamage(t)
+	if spellReady(_Q) then
+		mBAD = self:GetBonusAD()
+		dmg = 0
+		if myHero:GetSpellData(_Q).level == 1 then
+			dmg = 70 + (0.95 * mBAD)
+		elseif myHero:GetSpellData(_Q).level == 2 then
+			dmg = 80 + (1 * mBAD)
+		elseif myHero:GetSpellData(_Q).level == 3 then
+			dmg = 90 + (1.05 * mBAD)
+		elseif myHero:GetSpellData(_Q).level == 4 then
+			dmg = 100 + (1.1 * mBAD)
+		elseif myHero:GetSpellData(_Q).level == 5 then
+			dmg = 110 + (1.15 * mBAD)
+		end
+		fD = myHero:CalcDamage(t, dmg)
+		return fD
+	else
+		return 0
+	end
+end
+
+function ChampZoe:PassiveDamage(t)
+	eMHP = t.maxHealth
+	mBAD = self:GetBonusAD()
+	dmg = eMHP * 0.025
+	if mBAD > 900 then
+		dmg = dmg + (eMHP * 0.045)
+	end
+	if mBAD > 800 then
+		dmg = dmg + (eMHP * 0.045)
+	end
+	if mBAD > 700 then
+		dmg = dmg + (eMHP * 0.045)
+	end
+	if mBAD > 600 then
+		dmg = dmg + (eMHP * 0.045)
+	end
+	if mBAD > 500 then
+		dmg = dmg + (eMHP * 0.045)
+	end
+	if mBAD > 400 then
+		dmg = dmg + (eMHP * 0.045)
+	end
+	if mBAD > 300 then
+		dmg = dmg + (eMHP * 0.045)
+	end
+	if mBAD > 200 then
+		dmg = dmg + (eMHP * 0.045)
+	end
+	if mBAD > 100 then
+		dmg = dmg + (eMHP * 0.045)
+	end
+	return myHero:CalcDamage(t, dmg)
+end
+
 --[[-----------------------------------------------------
 ------------------INTERNAL FUNCTIONS---------------------
 -----------------------------------------------------]]--
@@ -4050,9 +4908,13 @@ function GlobalMenu()
 		_G.zeroBundle.Menu.Draw:addParam("w", "Draw W", SCRIPT_PARAM_ONOFF, true)
 		_G.zeroBundle.Menu.Draw:addParam("e", "Draw E", SCRIPT_PARAM_ONOFF, true)
 		_G.zeroBundle.Menu.Draw:addParam("r", "Draw R", SCRIPT_PARAM_ONOFF, true)
+	
+	_G.zeroBundle.Menu:addSubMenu(">> Misc Settings <<", "Misc")
+		_G.zeroBundle.Menu.Draw:addParam("intro", "Show Intro", SCRIPT_PARAM_ONOFF, true)
 end
 
 local champLoaded = false
+local bUser = GetUser()
 
 function OnLoad()
 	_G.zeroBundle.Menu = scriptConfig("--[[ Zer0 ]]--", "ZeroBundle")
@@ -4062,11 +4924,14 @@ function OnLoad()
 	
 	DelayAction(function()
 	
-		if myHero.charName == "Rengar" then
+		if myHero.charName == "Rengar" and bUser == "AZer0" then
 			_G.zeroBundle.Champion = ChampRengar()
 			champLoaded = true
-		elseif myHero.charName == "Fizz" then
+		elseif myHero.charName == "Fizz" and bUser == "AZer0" then
 			_G.zeroBundle.Champion = ChampFizz()
+			champLoaded = true
+		elseif myHero.charName == "Zoe" and bUser == "AZer0" then
+			_G.zeroBundle.Champion = ChampZoe()
 			champLoaded = true
 		elseif myHero.charName == "Fiora" then
 			_G.zeroBundle.Champion = ChampFiora()
@@ -4079,6 +4944,7 @@ function OnLoad()
 			_G.zeroBundle.WallJump = MyWallJump()
 			_G.zeroBundle.Prediction = MyPrediction()
 			_G.zeroBundle.Champion:SetupSkills()
+			_G.zeroBundle.ItemManager = MyItems()
 		end
 	
 	end, 5)
@@ -4086,6 +4952,10 @@ end
 
 function OnProcessSpell(unit, spell)
 	if not champLoaded then return false end
+	
+	if _G.zeroBundle.MyOrbWalk then
+		_G.zeroBundle.MyOrbWalk:OnProcessSpell(unit, spell)
+	end
 	
 	if _G.zeroBundle.Champion and _G.zeroBundle.Champion.champData.useProcessSpell then
 		_G.zeroBundle.Champion:OnProcessSpell(unit, spell)
@@ -4101,6 +4971,10 @@ end
 function OnApplyBuff(source, unit, buff)
 	if not champLoaded then return false end
 	
+	if _G.zeroBundle.ItemManager then
+		_G.zeroBundle.ItemManager:OnApplyBuff(source, unit, buff)
+	end
+	
 	if _G.zeroBundle.Champion and _G.zeroBundle.Champion.champData.useApplyBuff then
 		_G.zeroBundle.Champion:OnApplyBuff(source, unit, buff)
 	end
@@ -4108,6 +4982,10 @@ end
 
 function OnRemoveBuff(unit, buff)
 	if not champLoaded then return false end
+	
+	if _G.zeroBundle.ItemManager then
+		_G.zeroBundle.ItemManager:OnRemoveBuff(unit, buff)
+	end
 	
 	if _G.zeroBundle.Champion and _G.zeroBundle.Champion.champData.useRemoveBuff then
 		_G.zeroBundle.Champion:OnRemoveBuff(source, unit, buff)
@@ -4188,6 +5066,11 @@ end
 
 function OnTick()
 	if _G.zeroBundle.Aware then _G.zeroBundle.Aware:OnTick() end
+	
+	if _G.zeroBundle.MyOrbWalk then
+		_G.zeroBundle.MyOrbWalk:OnTick()
+	end
+	
 	if not champLoaded then return false end
 	
 	if _G.zeroBundle.WallJump then
