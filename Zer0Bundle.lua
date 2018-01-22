@@ -15,6 +15,10 @@ Orb Walker:
 -SxOrbWalk Fully Supported
 -Internal Orb Walk Fully Supported
 
+To Do:
+-Immune checks
+-Immobile checks
+
 Champions
 Fiora:
 -Kite with Vitals (SAC + Sx + Internal Orbwalks supported)
@@ -69,11 +73,13 @@ _G.zeroBundle = {
 	WallJump = nil,
 	Prediction = nil,
 	MyOrbWalk = nil,
-	ItemManager = nil
+	ItemManager = nil,
+	ZPrediction = nil,
+	SpellTracker = nil
 }
 
 _G.zeroSettings = {
-	debugging = false
+	debugging = true
 }
 
 local m = nil
@@ -121,41 +127,6 @@ function GetNextPathPoint(t)
 end
 
 --[[-----------------------------------------------------
--------------------------REPORT--------------------------
------------------------------------------------------]]--
-class("MyReporting")
-function MyReporting:__init()
-	
-end
-
-function MyReporting:encode(data)
-	baseEnc='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-    return ((data:gsub('.', function(x)
-        local r,baseEnc='',x:byte()
-        for i=8,1,-1 do r=r..(baseEnc%2^i-baseEnc%2^(i-1)>0 and '1' or '0') end
-        return r;
-    end)..'0000'):gsub('%d%d%d?%d?%d?%d?', function(x)
-        if (#x < 6) then return '' end
-        local c=0
-        for i=1,6 do c=c+(x:sub(i,i)=='1' and 2^(6-i) or 0) end
-        return baseEnc:sub(c+1,c+1)
-    end)..({ '', '==', '=' })[#data%3+1])
-end
-
-function MyReporting:makeId()
-	local result = 0
-	for i=0,objManager.maxObjects do
-		local unit = objManager:getObject(i)
-		if unit and unit.valid and unit.type == myHero.type then
-			for i=1,unit.name:len() do
-				result = result + unit.name:byte(i) + unit.networkID:byte(i)
-			end
-		end
-	end
-	return enc(result..myHero.charName..myHero.networkID..math.random(1,10000))
-end
-
---[[-----------------------------------------------------
 ------------------------DRAWING--------------------------
 -----------------------------------------------------]]--
 
@@ -178,11 +149,11 @@ function MyAwareness:__init()
 		self.loaded = true
 		
 		_G.zeroBundle.Menu:addSubMenu(">> Aware Settings <<", "Aware")
-			_G.zeroBundle.Menu.Aware:addParam("drawTowerRange", "Draw Tower Range", SCRIPT_PARAM_ONOFF, true)
-			_G.zeroBundle.Menu.Aware:addParam("printSummoners", "Print Summoners", SCRIPT_PARAM_ONOFF, true)
+			_G.zeroBundle.Menu.Aware:addParam("drawTowerRange", "Draw Tower Range", SCRIPT_PARAM_ONOFF, false)
+			_G.zeroBundle.Menu.Aware:addParam("printSummoners", "Print Summoners", SCRIPT_PARAM_ONOFF, false)
 			_G.zeroBundle.Menu.Aware:addParam("drawColorSummoners", "Summoner Draw color", SCRIPT_PARAM_COLOR, {255,255,0,0})
 			for _, e in pairs(GetEnemyHeroes()) do
-				_G.zeroBundle.Menu.Aware:addParam("printSummoners"..e.charName, "Print Summoners " .. e.charName, SCRIPT_PARAM_ONOFF, true)
+				_G.zeroBundle.Menu.Aware:addParam("printSummoners"..e.charName, "Print Summoners " .. e.charName, SCRIPT_PARAM_ONOFF, false)
 			end
 		self.lastPrintSum1 = nil
 		self.lastPrintSum2 = nil
@@ -445,7 +416,6 @@ end
 function MyItems:OnApplyBuff(source, unit, buff)
 	if source.isMe and unit.isMe then
 		if buff.name == "sheen" then
-			PrettyPrint("Sheen Proc Active", true)
 			_G.itemBuffs["sheen"] = true
 		end
 	end
@@ -454,7 +424,6 @@ end
 function MyItems:OnRemoveBuff(unit, buff)
 	if unit.isMe then
 		if buff.name == "sheen" then
-			PrettyPrint("Sheen Proc Used", true)
 			_G.itemBuffs["sheen"] = false
 		end
 	end
@@ -490,18 +459,18 @@ function OrbWalkManager:__init()
 		DelayAction(function()
 			self.sacPDetected = true
 		end, 5)
-	else
+	--[[else
 		self.internal = true
 		_G.zeroBundle.MyOrbWalk = MyOrbwalk()
 		self.internal = true
 	end
-	--[[
+	
 	elseif _Pewalk then
 		PrettyPrint("Detected Pewalk.", false)
 		PrettyPrint("Full support for Pewalk not found.", false)
 		DelayAction(function()
 			self.pewDetected = true
-		end, 5)
+		end, 5)]]--
 	elseif FileExist(LIB_PATH .. "SxOrbWalk.lua") then
 		PrettyPrint("Detected SxOrbWalk.", false)
 		require("SxOrbWalk")
@@ -510,7 +479,7 @@ function OrbWalkManager:__init()
 		end, 5)
 	else
 		PrettyPrint("No orb walk detected!", false)
-	end]]--
+	end
 end
 
 function OrbWalkManager:Mode()
@@ -579,7 +548,7 @@ function OrbWalkManager:ForcePoint(p)
 end
 
 --[[-----------------------------------------------------
---------------------TARGET SELECTOR----------------------
+---------------------PRED SELECTOR-----------------------
 -----------------------------------------------------]]--
 class("MyPrediction")
 function MyPrediction:__init()
@@ -640,7 +609,11 @@ function MyPrediction:__init()
 end
 
 function MyPrediction:AddQ(t, d, r, w, s, c)
-	self.TQ = TR_BindSS({type = t, delay = d, range = r, width = w, speed = s, allowedCollisionCount = c})
+	cc = 0
+	if c == false then
+		cc = math.huge
+	end
+	self.TQ = TR_BindSS({type = t, delay = d, range = r, width = w, speed = s, allowedCollisionCount = cc})
 end
 
 function PredictQ(t, minHC)
@@ -650,15 +623,36 @@ function PredictQ(t, minHC)
 			return CastPosition
 		end
 	end
+	if _G.zeroBundle.Menu.Pred.qPred == 1 then
+		if t and minHC > 0 then
+			local CastPosition, HitChance, Position = VP:GetLineCastPosition(t, self.skillStore["Q"].delay, self.skillStore["Q"].width, self.skillStore["Q"].speed, self.skillStore["Q"].range, myHero, self.skillStore["Q"].col)
+			if CastPosition and HitChance >= minHC and GetDistanceSqr(CastPosition) < self.skillStore["Q"].range * self.skillStore["Q"].range then
+				return CastPosition
+			end
+		end
+	elseif _G.zeroBundle.Menu.Pred.rPred == 2 then
+		if t and TP then
+			local CastPosition, HitChance, Info = TP:GetPrediction(self.TQ, t, myHero)
+            if self.skillStore["Q"].col and not Info then
+                return CastPosition, HitChance
+            elseif not self.skillStore["Q"].col then
+                return CastPosition, HitChance
+            end
+		end
+	end
 	return nil
 end
 
 function MyPrediction:AddW(t, d, r, w, s, c)
-	self.TW = TR_BindSS({type = t, delay = d, range = r, width = w, speed = s, allowedCollisionCount = c})
+	cc = 0
+	if c == false then
+		cc = math.huge
+	end
+	self.TW = TR_BindSS({type = t, delay = d, range = r, width = w, speed = s, allowedCollisionCount = cc})
 end
 
 function PredictW(t, minHC)
-	if _G.zeroBundle.Menu.Pred.rPred == 1 then
+	if _G.zeroBundle.Menu.Pred.wPred == 1 then
 		if t and minHC > 0 then
 			local CastPosition, HitChance, Position = VP:GetLineCastPosition(t, self.skillStore["W"].delay, self.skillStore["W"].width, self.skillStore["W"].speed, self.skillStore["W"].range, myHero, self.skillStore["W"].col)
 			if CastPosition and HitChance >= minHC and GetDistanceSqr(CastPosition) < self.skillStore["W"].range * self.skillStore["W"].range then
@@ -667,7 +661,7 @@ function PredictW(t, minHC)
 		end
 	elseif _G.zeroBundle.Menu.Pred.rPred == 2 then
 		if t and TP then
-			local CastPosition, HitChance, Info = TP:GetPrediction(TR_BindSS({type = 'IsLinear', delay = self.skillStore["W"].delay, range = self.skillStore["W"].range, width = self.skillStore["W"].width, speed = self.skillStore["W"].speed}), t, myHero)
+			local CastPosition, HitChance, Info = TP:GetPrediction(self.TW, t, myHero)
             if self.skillStore["W"].col and not Info then
                 return CastPosition, HitChance
             elseif not self.skillStore["W"].col then
@@ -729,21 +723,22 @@ function MyPrediction:PredictR(t, minHC)
 	return nil
 end
 
+
 --[[-----------------------------------------------------
 --------------------TARGET SELECTOR----------------------
 -----------------------------------------------------]]--
 --Last Champ Added: Zoe
 class("MyTarget")
 function MyTarget:__init(champRange, minionRange, jungleRange, dmgType)
-	local priorityTable = {
+	self.priorityTable = {
 		p5 = {"Alistar", "Amumu", "Blitzcrank", "Braum", "Dr. Mundo", "Garen", "Gnar", "Gragus", "Leona", "Mordekaiser", "Nautilus", "Olaf", "Poppy", "Rammus", "Rek'Sai", "Sejuani", "Shen", "Singed", "Sion", "Skarner", "Tahm Kench", "Taric", "Thresh", "Trundle", "Vi", "Volibear", "Warwick", "Wukong", "Zac"},
 		p4 = {"Aatrox", "Camille", "Cho'Gath", "Darius", "Elise", "Galio", "Hecarim", "Illaoi", "Ivern", "Janna", "Jarvan IV", "Kayn", "Kled", "Lee Sin", "Malphite", "Maokai", "Nasus", "Nocturne", "Nunu", "Ornn", "Pantheon", "Rakan", "Renekton", "Shyvana", "Tryndamere", "Udyr", "Urgot", "Vladimir", "Yorick"},
 		p3 = {"Akali", "Aurelion Sol", "Bard", "Ekko", "Evelynn", "Fiora", "Fizz", "Irelia", "Jax", "Karthus", "Kassadin", "Lissandra", "Morgana", "Nami", "Rengar", "Riven", "Rumble", "Shaco", "Sona", "Talon", "Teemo", "Twisted Fate", "Xin Zhao"},
 		p2 = {"Ahri", "Anivia", "Annie", "Azir", "Brand", "Cassiopeia", "Corki", "Diana", "Fiddlesticks", "Gangplank", "Heimerdinger", "Jayce", "Karma", "Katarina", "Kayle", "Kennen", "Kha'Zix", "LeBlanc", "Lulu", "Lux", "Malzahar", "Nidalee", "Orianna", "Ryze", "Soraka", "Swain", "Syndra", "Taliyah", "Veigar", "Vel'Koz", "Viktor", "Yasuo", "Ziggs", "Zilean", "Zoe", "Zyra"},
-		p1 = {"Ashe", "Caitlyn", "Draven", "Ezreal", "Graves", "Jhin", "Jinx", "Kalista", "Kindred", "Kog'Maw", "Lucian", "Master Yi", "Miss Fortune", "Quinn", "Sivir", "Tristana", "Twitch", "Varus", "Vayne", "Xayah", "Xerath", "Zed"} --Top protiorty
+		p1 = {"Ashe", "Caitlyn", "Draven", "Ezreal", "Graves", "Jhin", "Jinx", "Kalista", "Kindred", "Kog'Maw", "Lucian", "Master Yi", "Miss Fortune", "Quinn", "Sivir", "Tristana", "Twitch", "Varus", "Vayne", "Xayah", "Xerath", "Zed"}
 	}
 	
-	--self:Arrange()
+	self:Arrange()
 	
 	self.range = {
 		Champion = champRange,
@@ -765,23 +760,15 @@ function MyTarget:SetPriority(table, hero, priority)
 end
 
 function MyTarget:Arrange()
-     local priorityOrder = {
-		[1] = {1,1,1,1,1},
-        [2] = {1,1,2,2,2},
-        [3] = {1,1,2,2,3},
-        [4] = {1,1,2,3,4},
-        [5] = {1,2,3,4,5},
-    }
     local enemies = #GetEnemyHeroes()
     if enemies > 0 then
     	for i, enemy in ipairs(GetEnemyHeroes()) do
-    	    self:SetPriority(self.priorityTable.p1, enemy, priorityOrder[enemies][1])
-    	    self:SetPriority(self.priorityTable.p2, enemy, priorityOrder[enemies][2])
-    	    self:SetPriority(self.priorityTable.p3,  enemy, priorityOrder[enemies][3])
-    	    self:SetPriority(self.priorityTable.p4,  enemy, priorityOrder[enemies][4])
-    	    self:SetPriority(self.priorityTable.p5,  enemy, priorityOrder[enemies][5])
+    	    self:SetPriority(self.priorityTable.p1, enemy, 1)
+    	    self:SetPriority(self.priorityTable.p2, enemy, 2)
+    	    self:SetPriority(self.priorityTable.p3, enemy, 3)
+    	    self:SetPriority(self.priorityTable.p4, enemy, 4)
+    	    self:SetPriority(self.priorityTable.p5, enemy, 5)
     	end
-		PrettyPrint("Target Selection Setup Complete.", false)
     end
 end
 
@@ -2921,6 +2908,115 @@ function MyEvade:__init()
 				dangerLevel = 2
 			}
 		},
+		["Orianna"] = {
+			["OriannasQ"] = {
+				needsDelay = false,
+				evadeDelay = 0,
+				range = 1500,
+				width = 80,
+				danger = false,
+				spellType = "line",
+				aoe = false,
+				speed = 1500,
+				delay = 0,
+				name = "Orianna Q",
+				spell = _Q,
+				pretty = "Q",
+				canWall = true,
+				canDash = true,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true,
+				missle = "orianaizuna",
+				dangerLevel = 2
+			},
+			["OriannaQend"] = {
+				needsDelay = false,
+				evadeDelay = 0,
+				range = 1500,
+				width = 90,
+				danger = false,
+				spellType = "line",
+				aoe = false,
+				speed = 1200,
+				delay = 0,
+				name = "Orianna Q End",
+				spell = _Q,
+				pretty = "Q",
+				canWall = true,
+				canDash = true,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true,
+				missle = "",
+				dangerLevel = 2
+			},
+			["OrianaDissonanceCommand-"] = {
+				needsDelay = false,
+				evadeDelay = 0,
+				range = 250,
+				width = 255,
+				danger = false,
+				spellType = "circle",
+				aoe = true,
+				speed = math.huge,
+				delay = 0,
+				name = "Orianna W",
+				spell = _W,
+				pretty = "W",
+				canWall = false,
+				canDash = true,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true,
+				missle = "OrianaDissonanceCommand-",
+				source = "yomu_ring_",
+				dangerLevel = 2
+			},
+			["OriannasE"] = {
+				needsDelay = false,
+				evadeDelay = 0,
+				range = 1500,
+				width = 85,
+				danger = false,
+				spellType = "line",
+				aoe = false,
+				speed = 1850,
+				delay = 0,
+				name = "Orianna E",
+				spell = _E,
+				pretty = "E",
+				canWall = true,
+				canDash = true,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true,
+				missle = "orianaredact",
+				dangerLevel = 2
+			},
+			["OrianaDetonateCommand-"] = {
+				needsDelay = false,
+				evadeDelay = 0,
+				range = 1500,
+				width = 85,
+				danger = true,
+				spellType = "circle",
+				aoe = true,
+				speed = math.huge,
+				delay = 0.7,
+				name = "Orianna R",
+				spell = _R,
+				pretty = "R",
+				canWall = false,
+				canDash = true,
+				canEvade = true,
+				canSpellSheild = true,
+				canSheild = true,
+				missle = "OrianaDetonateCommand-",
+				source = "yomu_ring_",
+				dangerLevel = 2
+			}
+		},
 		["Garen"] = {
 			["GarenQAttack"] = {
 				needsDelay = false,
@@ -3235,6 +3331,9 @@ function MyEvade:OnProcessSpell(unit, spell)
 		else
 			if spell and unit and spell.target and spell.target == myHero then
 				PrettyPrint("Detected target spell from " .. unit.charName .. " spell: " .. spell.name, true)
+				WriteFile(unit.charName .. " - " .. spell.name .. "\r\n", LIB_PATH .. "ZTargetSpells_Unknown.txt", "a+")
+			elseif spell and unit then
+				WriteFile(unit.charName .. " - " .. spell.name .. "\r\n", LIB_PATH .. "ZSkillSpells_Unknown.txt", "a+")
 			end
 		end
 	
@@ -3354,107 +3453,193 @@ function MyEvade:WillAoEHit(spellInfo, spell, from, target)
 end
 
 --[[-----------------------------------------------------
-----------------------ORBWALKER--------------------------
+---------------------SPELL TRACKER-----------------------
 -----------------------------------------------------]]--
-local trueAARange = myHero.range + 65
-local lastAA = GetTickCount()
-local lastWindUp = 0
-local lastAACD = 0
 
-class("MyOrbwalk")
-function MyOrbwalk:__init()
-	trueAARange = myHero.range + 65
-	lastAA = GetTickCount()
-	lastWindUp = 0
-	lastAACD = 0
+class("MySpellTracker")
+function MySpellTracker:__init()
+	_G.zeroBundle.Menu:addSubMenu(">> Spell Tracker Settings <<", "SpellTracker")
+	_G.zeroBundle.Menu.SpellTracker:addSubMenu(">> Dash Settings <<", "Dash")
+	_G.zeroBundle.Menu.SpellTracker:addSubMenu(">> Chanel Settings <<", "Chanel")
 	
-	self.enabled = true
+	self.activeSpells = {}
+	self.callBack = {}
 	
-	self.ts = TargetSelector(TARGET_LESS_CAST_PRIORITY, trueAARange, DAMAGE_PHYSICAL, false)
-	self.allyMinionTS = minionManager(MINION_ALLY, 2000, myHero, MINION_SORT_HEALTH_ASC)
-	self.enemyMinionTS = minionManager(MINION_ENEMY, 2000, myHero, MINION_SORT_HEALTH_ASC)
-	self.ts.name = "Zer0 Orb Walker"
+	self.standStill = {
+		["Caitlyn"]                     = { "R" },
+		["Katarina"]                    = { "R" },
+		["MasterYi"]                    = { "W" },
+		["Fiddlesticks"]                = { "R" },
+		["Galio"]                       = { "R" },
+		["Lucian"]                      = { "R" },
+		["MissFortune"]                 = { "R" },
+		["VelKoz"]                      = { "R" },
+		["Nunu"]                        = { "R" },
+		["Shen"]                        = { "R" },
+		["Karthus"]                     = { "R" },
+		["Malzahar"]                    = { "R" },
+		["Pantheon"]                    = { "R" },
+		["Warwick"]                     = { "R" },
+		["Xerath"]                      = { "R" },
+	}
+
+	self.gapCloser = {
+		["Aatrox"]                      = { "Q" },
+		["Akali"]                       = { "R" },
+		["Alistar"]                     = { "W" },
+		["Amumu"]                       = { "Q" },
+		["Caitlyn"]                     = { "E" },
+		["Corki"]                       = { "W" },
+		["Diana"]                       = { "R" },
+		["Ezreal"]                       = { "E" },
+		["Elise"]                       = { "Q", "E" },
+		["Fiddlesticks"]                = { "R" },
+		["Fiora"]                       = { "Q" },
+		["Fizz"]                        = { "Q" },
+		["Gnar"]                        = { "E" },
+		["Gragas"]                      = { "E" },
+		["Graves"]                      = { "E" },
+		["Hecarim"]                     = { "R" },
+		["Irelia"]                      = { "Q" },
+		["JarvanIV"]                    = { "Q", "R" },
+		["Jax"]                         = { "Q" },
+		["Jayce"]                       = { "Q" },
+		["Katarina"]                    = { "E" },
+		["Kassadin"]                    = { "R" },
+		["Kennen"]                      = { "E" },
+		["KhaZix"]                      = { "E" },
+		["Lissandra"]                   = { "E" },
+		["LeBlanc"]                     = { "W" , "R"},
+		["LeeSin"]                      = { "Q" },
+		["Leona"]                       = { "E" },
+		["Lucian"]                      = { "E" },
+		["Malphite"]                    = { "R" },
+		["MasterYi"]                    = { "Q" },
+		["MonkeyKing"]                  = { "E" },
+		["Nautilus"]                    = { "Q" },
+		["Nocturne"]                    = { "R" },
+		["Olaf"]                        = { "R" },
+		["Pantheon"]                    = { "W" , "R"},
+		["Poppy"]                       = { "E" },
+		["RekSai"]                      = { "E" },
+		["Renekton"]                    = { "E" },
+		["Riven"]                       = { "Q", "E"},
+		["Rengar"]                      = { "R" },
+		["Sejuani"]                     = { "Q" },
+		["Sion"]                        = { "R" },
+		["Shen"]                        = { "E" },
+		["Shyvana"]                     = { "R" },
+		["Talon"]                       = { "E" },
+		["Thresh"]                      = { "Q" },
+		["Tristana"]                    = { "W" },
+		["Tryndamere"]                  = { "E" },
+		["Udyr"]                        = { "E" },
+		["Volibear"]                    = { "Q" },
+		["Vi"]                          = { "Q" },
+		["XinZhao"]                     = { "E" },
+		["Yasuo"]                       = { "E" },
+		["Zac"]                         = { "E" },
+		["Ziggs"]                       = { "W" },
+	}
 	
-	self.minionInfo = {}
-	self.minionInfo[(myHero.team == 100 and "Blue" or "Red").."_Minion_Basic"] =      { aaDelay = 400, projSpeed = 0    }
-	self.minionInfo[(myHero.team == 100 and "Blue" or "Red").."_Minion_Caster"] =     { aaDelay = 484, projSpeed = 0.68 }
-	self.minionInfo[(myHero.team == 100 and "Blue" or "Red").."_Minion_Wizard"] =     { aaDelay = 484, projSpeed = 0.68 }
-	self.minionInfo[(myHero.team == 100 and "Blue" or "Red").."_Minion_MechCannon"] = { aaDelay = 365, projSpeed = 1.18 }
-	self.minionInfo.obj_AI_Turret =                                         { aaDelay = 150, projSpeed = 1.14 }
+	self:CheckChannelingSpells()
+	self:CheckGapcloserSpells()
 	
-	self.aaRefresh = {"PowerFist", "DariusNoxianTacticsONH", "Takedown", "Ricochet", "BlindingDart", "VayneTumble", "JaxEmpowerTwo", "MordekaiserMaceOfSpades", "SiphoningStrikeNew", "RengarQ", "MonkeyKingDoubleAttack", "YorickSpectral", "ViE", "GarenSlash3", "HecarimRamp", "XenZhaoComboTarget", "LeonaShieldOfDaybreak", "ShyvanaDoubleAttack", "shyvanadoubleattackdragon", "TalonNoxianDiplomacy", "TrundleTrollSmash", "VolibearQ", "PoppyDevastatingBlow"}
-	self.extraAAs = {"frostarrow", "CaitlynHeadshotMissile", "QuinnWEnhanced", "TrundleQ", "GarenSlash2", "RenektonExecute", "RenektonSuperExecute"}
-	
-	_G.zeroBundle.Menu:addSubMenu(">> OrbWalk Settings <<", "OrbWalk")
-		_G.zeroBundle.Menu.Keys:addParam("carry", "Auto Carry", SCRIPT_PARAM_ONKEYDOWN, false, string.byte(" "))
-		_G.zeroBundle.Menu.Keys:addParam("lastHit", "Last Hit", SCRIPT_PARAM_ONKEYDOWN, false, string.byte("X"))
-		_G.zeroBundle.Menu.Keys:addParam("harass", "Harass", SCRIPT_PARAM_ONKEYDOWN, false, string.byte("C"))
-		_G.zeroBundle.Menu.Keys:addParam("laneClear", "Lane Clear", SCRIPT_PARAM_ONKEYDOWN, false, string.byte("V"))
-		_G.zeroBundle.Menu.OrbWalk:addTS(self.ts)
+	AddTickCallback(function() self:OnTick() end)
+	AddProcessSpellCallback(function(unit, spell) self:OnProcessSpell(unit, spell) end)
 end
 
-function MyOrbwalk:OnProcessSpell(object, spell)
-	if myHero.dead then return false end
-	
-	if object.isMe and (spell.name:lower():find("attack") or self:ExtraAAs(spell)) then
-		lastAA = GetTickCount() - GetLatency() / 2
-		lastWindUp = spell.windUpTime * 1000
-		lastAACD = spell.animationTime * 1000
-	elseif object.isMe and self:RefreshAAs(spell) then
-		lastAA = GetTickCount() - GetLatency() / 2 - lastAACD
-	end
-end
-
-function MyOrbwalk:OnTick()
-	trueAARange = myHero.range + GetDistance(myHero.minBBox)
-	self.ts.range = trueAARange
-	self.ts:update()
-	
-	if myHero.dead then return false end
-	
-	if _G.zeroBundle.Menu.Keys.carry then
-		if self:TimeToAttack() and self.ts.target and ValidTarget(self.ts.target, self.trueAARange) then
-			myHero:Attack(self.ts.target)
-		elseif self.TimeToMove() then
-			self:MoveToCursor()
+function MySpellTracker:OnTick()
+	if #self.activeSpells > 0 then
+		for i = #self.activeSpells, 1, -1 do
+			local spell = self.activeSpells[i]
+			if os.clock() + Latency() - spell.Time <= 2.5 then
+				self:Trigger(spell)
+			else
+				table.remove(self.activeSpells, i)
+			end
 		end
 	end
 end
 
-function MyOrbwalk:TimeToMove()
-	if GetTickCount() + GetLatency() / 2 > lastAA + lastWindUp + 35 then
-		return true
-	end
-	return false
+function MySpellTracker:Trigger(unit)
+	for i, callback in ipairs(self.callBack) do
+        callback(unit)
+    end
 end
 
-function MyOrbwalk:TimeToAttack()
-	return (GetTickCount() + GetLatency() / 2 > lastAA or 0 + lastAACDlastAACDlastAACD or 0)
+function MySpellTracker:AddCallBack(h)
+	table.insert(self.callBack, h)
+    return self
 end
 
-function MyOrbwalk:MoveToCursor()
-	if GetDistanceSqr(mousePos) > 50 * 50 then
-		local moveToPos = myHero + (Vector(mousePos) - myHero):normalized() * 300
-		myHero:MoveTo(moveToPos.x, moveToPos.z)
-	end
-end
-
-function MyOrbwalk:ExtraAAs(s)
-	for _, a in pairs(self.extraAAs) do
-		if s.name == a then
-			return true
+function MySpellTracker:OnProcessSpell(u, s)
+	if u and s and not myHero.dead and s.name and not u.isMe and u.type and u.team and GetDistanceSqr(u) < 2000 * 2000 then
+		local sType = ""
+		local sName = tostring(s.name)
+		if tostring(u:GetSpellData(_Q).name):find(sName) then
+			sType = "Q"
+		elseif tostring(u:GetSpellData(_W).name):find(sName) then
+			sType = "W"
+		elseif tostring(u:GetSpellData(_E).name):find(sName) then
+			sType = "E"
+		elseif tostring(u:GetSpellData(_R).name):find(sName) then
+			sType = "R"
+		end
+		
+		if sType ~= "" then
+			spellIs = "None"
+			if self:IsGapCloser(u, sType) then spellIs = "GapCloser"
+			elseif self:IsChanel(u, sType) then spellIs = "Chanel" end
+			table.insert(self.activeSpells, {Time = os.clock() - Latency(), Unit = unit, Slot = sType, Spell = s, SpellIs = spellIs})
 		end
 	end
-	return false
 end
 
-function MyOrbwalk:RefreshAAs(s)
-	for _, a in pairs(self.aaRefresh) do
-		if s.name == a then
-			return true
+function MySpellTracker:IsGapCloser(u, s)
+	if self.gapCloser[u.charName] then
+		for i, spell in pairs(self.gapCloser[e.charName]) do
+			if s.Type == spell then
+				return true
+			end
 		end
 	end
-	return false
+end
+
+function MySpellTracker:IsChanel(u, s)
+	if self.standStill[u.charName] then
+		for i, spell in pairs(self.gapCloser[e.charName]) do
+			if s.Type == spell then
+				return true
+			end
+		end
+	end
+end
+
+function MySpellTracker:CheckChannelingSpells()
+    if #GetEnemyHeroes() > 0 then
+        for _, e in ipairs(GetEnemyHeroes()) do
+            if self.standStill[e.charName] then
+                for i, spell in pairs(self.standStill[e.charName]) do
+					_G.zeroBundle.Menu.SpellTracker.Chanel:addParam(e.charName .. spell, e.charName .. " - " .. spell, SCRIPT_PARAM_ONOFF, true)
+                end
+            end
+        end
+    end
+    return self
+end
+
+function MySpellTracker:CheckGapcloserSpells()
+    if #GetEnemyHeroes() > 0 then
+        for _, e in ipairs(GetEnemyHeroes()) do
+            if self.gapCloser[e.charName] then
+                for i, spell in pairs(self.gapCloser[e.charName]) do
+                    _G.zeroBundle.Menu.SpellTracker.Dash:addParam(e.charName .. spell, e.charName .. " - " .. spell, SCRIPT_PARAM_ONOFF, true)
+                end
+            end
+        end
+    end
+    return self
 end
 
 --[[-----------------------------------------------------
@@ -4026,7 +4211,8 @@ function ChampFiora:__init()
 		delay = 0.5,
 		width = 70,
 		speed = 3200,
-		type = 'IsLinear'
+		type = 'IsLinear',
+		col = false
 	}
 		
 	self.abilityR = {
@@ -4034,11 +4220,6 @@ function ChampFiora:__init()
 	}
 	
 	self.vitalMarks = {}
-	for _,e in pairs(GetEnemyHeroes()) do
-		if e then
-			self.vitalMarks[e.charName] = { NE = false, NW = false, SE = false, SW = false }
-		end
-	end
 	
 	self.vitalKitePosition = nil
 	self.vitalKiteTarget = nil
@@ -4047,9 +4228,24 @@ function ChampFiora:__init()
 	
 	_G.zeroBundle.Menu:addSubMenu(">> Combo Settings <<", "Combo")
 		_G.zeroBundle.Menu.Combo:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("qVitals", "Use Q For Vital", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("qEngage", "Use Q Engage", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("qKite", "Use Q in Kiting", SCRIPT_PARAM_ONOFF, true)
 		_G.zeroBundle.Menu.Combo:addParam("e", "Use E", SCRIPT_PARAM_ONOFF, true)
 		_G.zeroBundle.Menu.Combo:addParam("r", "Use R", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("rETower", "Use R Under Enemy Tower", SCRIPT_PARAM_ONOFF, false)
+		for _,e in pairs(GetEnemyHeroes()) do
+			if e then
+				self.vitalMarks[e.charName] = { NE = false, NW = false, SE = false, SW = false, SNE = nil, SNW = nil, SSE = nil, SSW = nil }
+				_G.zeroBundle.Menu.Combo:addParam("r" .. e.charName, "Use R on " .. e.charName, SCRIPT_PARAM_ONOFF, true)
+				_G.zeroBundle.Menu.Combo:addParam("rHpMin" .. e.charName, "Min Percentage HP", SCRIPT_PARAM_SLICE, 25, 0, 100, 0)
+				_G.zeroBundle.Menu.Combo:addParam("rHpMax" .. e.charName, "Max Percentage HP", SCRIPT_PARAM_SLICE, 65, 0, 100, 0)
+				
+				
+			end
+		end
 		_G.zeroBundle.Menu.Combo:addParam("kiteVitals", "Kite Vitals", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("stickcyKite", "Sticky Kiting (Non Vitals)", SCRIPT_PARAM_ONOFF, true)
 	
 	_G.zeroBundle.Menu:addSubMenu(">> Harass Settings <<", "Harass")
 		_G.zeroBundle.Menu.Harass:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, false)
@@ -4069,7 +4265,7 @@ function ChampFiora:__init()
 	PrettyPrint("Loaded: <b>Fiora - Duel Me Bitch</b> <b>*BETA*</b>", false)
 	DelayAction(function()
 		if _G.zeroBundle.OrbWalk.sacDetected then
-			DelayAction(function() PrettyPrint("Please make sure to disable Stick To Target in SAC:R settings. This script will kite with vitals/auto stick to target.", false) end, 10)
+			DelayAction(function() PrettyPrint("Please make sure to disable Stick To Target in SAC:R settings. This script will kite with vitals/auto stick to target (if enabled).", false) end, 10)
 		end
 	end, 15)
 end
@@ -4104,7 +4300,7 @@ function ChampFiora:KillSteal()
 end
 
 function ChampFiora:SetupSkills()
-	--_G.zeroBundle.Prediction:AddR(self.abilityR.type, self.abilityR.delay, self.abilityR.range, self.abilityR.width, self.abilityR.speed, self.abilityR.col)
+	_G.zeroBundle.Prediction:AddW(self.abilityW.type, self.abilityW.delay, self.abilityW.range, self.abilityW.width, self.abilityW.speed, self.abilityW.col)
 end
 
 function ChampFiora:Combo()
@@ -4114,7 +4310,7 @@ function ChampFiora:Combo()
 		
 		tD = GetDistanceSqr(target)
 		
-		if _G.zeroBundle.Menu.Combo.r and tD < self.abilityR.range * self.abilityR.range and spellReady(_R) and target.health < self:RDamage(target) and not self:TargetHasVital(target) and not UnderTower(target) then
+		if _G.zeroBundle.Menu.Combo.r and tD < self.abilityR.range * self.abilityR.range and spellReady(_R) and _G.zeroBundle.Menu.Combo["r" .. target.charName] and target.health < _G.zeroBundle.Menu.Combo["rHpMax" .. target.charName] and target.health > _G.zeroBundle.Menu.Combo["rHpMin" .. target.charName] and not self:TargetHasVital(target) and (not UnderTower(target) or UnderTower(target) and _G.zeroBundle.Menu.Combo.rETower) then
 			CastSpell(_R, target)
 			return true
 		end
@@ -4122,14 +4318,16 @@ function ChampFiora:Combo()
 		if _G.zeroBundle.Menu.Combo.q and tD < self.abilityQ.range * self.abilityQ.range and spellReady(_Q) and self:TargetHasVital(target) then
 			vO = self:GetVitalOffset(target)
 			if vO then
-				newX = target.x + vO.x
-				newZ = target.z + vO.z
-				CastSpell(_Q, newX, newZ)
-				return true
+				newX = target.pos.x + vO.x
+				newZ = target.pos.z + vO.z
+				if GetDistanceSqr(Vector(newX, target.pos.y, newZ)) < self.abilityQ.range * self.abilityQ.range then
+					CastSpell(_Q, newX, newZ)
+					return true
+				end
 			end
 		end
 		
-		if _G.zeroBundle.Menu.Combo.q and tD > self.aaRange * self.aaRange and spellReady(_Q) and not spellReady(_E) and not self:TargetHasVital(target) then
+		if _G.zeroBundle.Menu.Combo.q and tD > (self.aaRange * self.aaRange) * 1.5 and spellReady(_Q) and not spellReady(_E) and not self:TargetHasVital(target) then
 			CastSpell(_Q, target.x, target.z)
 			return true
 		end
@@ -4185,15 +4383,7 @@ end
 function ChampFiora:KiteWithTargetVitals(t)
 	if not _G.zeroBundle.Menu.Combo.kiteVitals then return false end
 	
-	if self.vitalKitePosition then
-		if GetDistanceSqr(self.vitalKitePosition) > 450 then
-			self.vitalKitePosition = nil
-			self.vitalKiteTarget = nil
-			_G.zeroBundle.OrbWalk:ForcePoint(nil)
-		end
-	end
-	
-	if t and ValidTarget(t, 450) then
+	if t and ValidTarget(t, 200) then
 		if self:TargetHasVital(t) then
 			vO = self:GetVitalOffset(t)
 			if vO ~= nil then
@@ -4201,27 +4391,24 @@ function ChampFiora:KiteWithTargetVitals(t)
 				nZ = t.pos.z + vO.z
 				vKP = Vector(nX, t.y, nZ)
 				mV = Vector(myHero.x, myHero.y, myHero.z)
-				if mV:dist(vKP) < 450 then
+				if mV:dist(vKP) < 200 then
 					self.vitalKiteTarget = t
 					self.vitalKitePosition = vKP
 					_G.zeroBundle.OrbWalk:ForcePoint(vKP)
-					PrettyPrint("Kiting Target: [" .. t.charName .. "]", true)
 				else
 					self.vitalKitePosition = nil
 					self.vitalKiteTarget = nil
 					_G.zeroBundle.OrbWalk:ForcePoint(nil)
-					PrettyPrint("Kiting Target: [Reset E:1]", true)
 				end
 			else
 				self.vitalKitePosition = nil
 				self.vitalKiteTarget = nil
 				_G.zeroBundle.OrbWalk:ForcePoint(nil)
-				PrettyPrint("Kiting Target: [Reset E:2]", true)
 			end
 		else
 			p = GetNextPathPoint(t)
 			if p then
-				if GetDistanceSqr(p) < 80 then
+				if GetDistanceSqr(p) < 60 * 60 then
 					nP = self:NewKiteOffet(t)
 					p = Vector(p.x + nP.x, t.pos.y, p.z + nP.z)
 				end
@@ -4235,7 +4422,6 @@ function ChampFiora:KiteWithTargetVitals(t)
 		self.vitalKitePosition = nil
 		self.vitalKiteTarget = nil
 		_G.zeroBundle.OrbWalk:ForcePoint(nil)
-		PrettyPrint("Kiting Target: [Reset E:3]", true)
 	end
 end
 
@@ -4295,6 +4481,26 @@ function ChampFiora:ResetVitals()
 			end
 		end
 	end
+	
+	if self.vitalKitePosition and self.vitalKiteTarget then
+		if self.bTarget and self.bTarget ~= self.vitalKiteTarget then
+			self.vitalKitePosition = nil
+			self.vitalKiteTarget = nil
+			_G.zeroBundle.OrbWalk:ForcePoint(nil)
+		end
+		
+		if not ValidTarget(self.vitalKiteTarget) or self.vitalKiteTarget.dead or self.vitalKiteTarget.visible then
+			self.vitalKitePosition = nil
+			self.vitalKiteTarget = nil
+			_G.zeroBundle.OrbWalk:ForcePoint(nil)
+		end
+	end
+	
+	if self.vitalKitePosition == nil or self.vitalKiteTarget == nil then
+		self.vitalKitePosition = nil
+		self.vitalKiteTarget = nil
+		_G.zeroBundle.OrbWalk:ForcePoint(nil)
+	end
 end
 
 function ChampFiora:OnCreateObj(object)
@@ -4351,7 +4557,6 @@ end
 function ChampFiora:OnDeleteObj(object)
 	on = object.name
 	if object and on:find("Fiora_Base_Passive") then
-		print("found passive")
 		closest = nil
 		closestDist = nil
 		for _,e in pairs(GetEnemyHeroes()) do
@@ -4380,17 +4585,17 @@ function ChampFiora:OnDeleteObj(object)
 				self.vitalMarks[closest.charName].SW = false
 			end
 		end
+	elseif object and on:find("Fiora") then
+		print(object.name .. " removed")
 	end
 end
 
 function ChampFiora:OnApplyBuff(source, unit, buff)
-	--[[if source and unit and buff and source.isMe then
-		PrettyPrint("New buff [" .. unit.charName .. "] [" .. buff.name .. "]", true)
-	end]]--
+	
 end
 
 function ChampFiora:OnRemoveBuff(unit, buff)
-	
+
 end
 
 function ChampFiora:OnDraw()
@@ -4432,7 +4637,7 @@ function ChampFiora:OnProcessAttack(unit, spell)
 				PrettyPrint("Auto Parrying [Ignite].", true)
 				return true
 			end
-			--Check AA Buffs (Fizz W, Fiora E, etc
+			--Check AA Buffs (Fizz W, Fiora E, etc)
 			if spell.name:lower():find("attack") or spell.name:lower():find("crit") and getDmg("AD", myHero, target) >= myHero.health then
 				CastSpell(_W, unit.x, unit.z)
 				PrettyPrint("Auto Parrying [Killing Blow].", true)
@@ -4476,8 +4681,8 @@ function ChampFiora:EvadeDash(spell, eS, unit, hero)
 end
 
 function ChampFiora:WallJump(from, to)
-	if spellReady(_E) then
-		CastSpell(_E, to.x, to.z)
+	if spellReady(_Q) then
+		CastSpell(_Q, to.x, to.z)
 	end
 end
 
@@ -4893,6 +5098,456 @@ function ChampZoe:PassiveDamage(t)
 end
 
 --[[-----------------------------------------------------
+----------------------CHAMP XAYAH------------------------
+-----------------------------------------------------]]--
+class("ChampXayah")
+function ChampXayah:__init()
+	
+	self.champData = {
+		useAutoMode = false,
+		useFleeMode = false,
+		useProcessSpell = false,
+		useApplyBuff = false,
+		useRemoveBuff = false,
+		useCreateObj = false,
+		useDeleteObj = false,
+		useProcessAttack = false,
+		useEvade = false,
+		useEvadeDash = false,
+		useSheild = false,
+		useWall = false
+	}
+	
+	self.bTarget = nil
+	
+	self.aaRange = myHero.range + myHero.boundingRadius
+	
+	self.abilityQ = {
+		range = 1075,
+		delay = 0.25,
+		speed = 1900,
+		width = 75,
+		col = false
+	}
+	
+	self.abilityW = {
+		range = 1000,
+		delay = 0.25
+	}
+		
+	self.abilityE = {
+		range = 1075,
+		delay = 0.2,
+		speed = 1800,
+		width = 75,
+		col = false
+	}
+	
+	self.abilityR = {
+		range = 1040,
+		delay = 0.5,
+		speed = 2200,
+		width = 150,
+		col = false
+	}
+	
+	self.feathers = {}
+	
+	self.target = MyTarget(1075, 1075, 1075, DAMAGE_MAGIC)
+	
+	_G.zeroBundle.Menu:addSubMenu(">> Combo Settings <<", "Combo")
+		_G.zeroBundle.Menu.Combo:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("w", "Use W", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("e", "Use E", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("r", "Use R", SCRIPT_PARAM_ONOFF, true)
+	
+	_G.zeroBundle.Menu:addSubMenu(">> Harass Settings <<", "Harass")
+		_G.zeroBundle.Menu.Harass:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, false)
+		_G.zeroBundle.Menu.Harass:addParam("w", "Use W", SCRIPT_PARAM_ONOFF, false)
+		_G.zeroBundle.Menu.Harass:addParam("e", "Use E", SCRIPT_PARAM_ONOFF, false)
+	
+	_G.zeroBundle.Menu:addSubMenu(">> Lane Clear Settings <<", "LaneClear")
+		_G.zeroBundle.Menu.LaneClear:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.LaneClear:addParam("W", "Use W", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.LaneClear:addParam("e", "Use E", SCRIPT_PARAM_ONOFF, true)
+		
+	_G.zeroBundle.Menu:addSubMenu(">> Flee Settings <<", "Flee")
+		_G.zeroBundle.Menu.Flee:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Flee:addParam("e", "Use E", SCRIPT_PARAM_ONOFF, true)
+		
+	_G.zeroBundle.Menu:addSubMenu(">> Prediction <<", "Pred")
+		_G.zeroBundle.Menu.Pred:addParam("wPred", "W Prediction", SCRIPT_PARAM_LIST, 1, {"VPred", "TRPred", "Internal"})
+	
+	
+	PrettyPrint("Loaded: <b>Xayah - Half a Heart</b>", false)
+end
+
+function ChampXayah:KillSteal()
+	--[[
+	for _,e in pairs(GetEnemyHeroes()) do
+		if e and ValidTarget(e) then
+			eD = GetDistanceSqr(e)
+			if eD < self.aaRange and spellReady(_E) and self:EDamage(e) > e.health then
+				CastSpell(_E, e.x, e.z)
+				myHero:Attack(e)
+				return true
+			elseif eD < self.abilityQ.range and spellReady(_Q) and self:QDamage(e) > e.health then
+				CastSpell(_Q, e.z, e.z)
+				return true
+			end
+		end
+	end
+	]]--
+end
+
+function ChampXayah:SetupSkills()
+	--_G.zeroBundle.Prediction:AddR(self.abilityR.type, self.abilityR.delay, self.abilityR.range, self.abilityR.width, self.abilityR.speed, self.abilityR.col)
+end
+
+function ChampXayah:Combo()
+	target = self.bTarget
+	if target and not target.dead and target.health > 0 and ValidTarget(target) then
+		
+		tD = GetDistanceSqr(target)
+		
+		
+		
+	end
+end
+
+function ChampXayah:Harass()
+	target = self.bTarget
+	if target and not target.dead and target.health > 0 and ValidTarget(target) then
+		
+	end
+end
+
+function ChampXayah:LaneClear()
+	self.target:Update("LaneClear")
+	if _G.zeroBundle.Menu.Keys.harassLaneClear then
+		self:Harass()
+	end
+	
+	for _,m in pairs(self.target.minion.objects) do
+		if m and ValidTarget(m) then
+			mR = GetDistanceSqr(m)
+			
+		end
+	end
+end
+
+function ChampXayah:JungleClear()
+	
+end
+
+function ChampXayah:LastHit()
+	
+end
+
+function ChampXayah:OnCreateObj(object)
+	
+end
+
+function ChampXayah:OnDeleteObj(object)
+	
+end
+
+function ChampXayah:OnApplyBuff(source, unit, buff)
+	
+end
+
+function ChampXayah:OnRemoveBuff(unit, buff)
+	
+end
+
+function ChampXayah:OnDraw()
+	
+end
+
+function ChampXayah:OnTick()
+	self.target:Update("Combo")
+	self.bTarget = self.target:ComboTarget()
+end
+
+function ChampXayah:Evade(spell, eS, unit, myHero)
+	return false
+end
+
+function ChampXayah:EvadeDash(spell, eS, unit, hero)
+	return false
+end
+
+function ChampXayah:GetDamage(t)
+	return math.ceil(self:RDamage(t) + self:EDamage(t) + self:WDamage(t) + self:QDamage(t) + self:PassiveDamage(t))
+end
+
+function ChampXayah:RDamage(t)
+	if spellReady(_R) then
+		return myHero:CalcMagicDamage(t, ((((myHero:GetSpellData(_R).level * 50) + 50) + (myHero.addDamage * 1.0))))
+	else
+		return 0
+	end
+end
+
+function ChampXayah:EDamage(t)
+	if spellReady(_E) then
+		return myHero:CalcMagicDamage(t, ((((myHero:GetSpellData(_E).level * 10) + 40) + (myHero.addDamage * 0.6))))
+	else
+		return 0
+	end
+end
+
+function ChampXayah:WDamage(t)
+	return 0
+end
+
+function ChampXayah:QDamage(t)
+	if spellReady(_Q) then
+		return myHero:CalcMagicDamage(t, ((((myHero:GetSpellData(_Q).level * 20) + 20) + (myHero.addDamage * 0.4))))
+	else
+		return 0
+	end
+end
+
+function ChampXayah:PassiveDamage(t)
+	return 0
+end
+
+--[[-----------------------------------------------------
+----------------------CHAMP BLITZ------------------------
+-----------------------------------------------------]]--
+class("ChampBlitzcrank")
+function ChampBlitzcrank:__init()
+	
+	self.champData = {
+		useAutoMode = false,
+		useFleeMode = false,
+		useProcessSpell = false,
+		useApplyBuff = false,
+		useRemoveBuff = false,
+		useCreateObj = false,
+		useDeleteObj = false,
+		useProcessAttack = false,
+		useEvade = false,
+		useEvadeDash = false,
+		useSheild = false,
+		useWall = false,
+		useSpellCallBacks = true
+	}
+	
+	self.bTarget = nil
+	
+	self.aaRange = myHero.range + myHero.boundingRadius
+	
+	self.abilityQ = {
+		range = 1000,
+		delay = 0.25,
+		speed = 1800,
+		width = 70,
+		col = true,
+		type = 'IsLinear'
+	}
+	
+	self.abilityW = {
+		
+	}
+		
+	self.abilityE = {
+		
+	}
+	
+	self.abilityR = {
+		range = 600
+	}
+	
+	
+	self.target = MyTarget(1300, 1300, 1300, DAMAGE_MAGIC)
+	
+	_G.zeroBundle.Menu:addSubMenu(">> Combo Settings <<", "Combo")
+		_G.zeroBundle.Menu.Combo:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("w", "Use W", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("e", "Use E", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("r", "Use R", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.Combo:addParam("pullNoE", "Pull Without E", SCRIPT_PARAM_ONOFF, false)
+		_G.zeroBundle.Menu.Combo:addParam("autoBeforeE", "Auto Before E", SCRIPT_PARAM_ONOFF, true)
+	
+	_G.zeroBundle.Menu:addSubMenu(">> Harass Settings <<", "Harass")
+		_G.zeroBundle.Menu.Harass:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, false)
+		_G.zeroBundle.Menu.Harass:addParam("w", "Use W", SCRIPT_PARAM_ONOFF, false)
+		_G.zeroBundle.Menu.Harass:addParam("e", "Use E", SCRIPT_PARAM_ONOFF, false)
+	
+	_G.zeroBundle.Menu:addSubMenu(">> Lane Clear Settings <<", "LaneClear")
+		_G.zeroBundle.Menu.LaneClear:addParam("q", "Use Q", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.LaneClear:addParam("W", "Use W", SCRIPT_PARAM_ONOFF, true)
+		_G.zeroBundle.Menu.LaneClear:addParam("e", "Use E", SCRIPT_PARAM_ONOFF, true)
+		
+	_G.zeroBundle.Menu:addSubMenu(">> Flee Settings <<", "Flee")
+		_G.zeroBundle.Menu.Flee:addParam("w", "Use W", SCRIPT_PARAM_ONOFF, true)
+		
+	_G.zeroBundle.Menu:addSubMenu(">> Pull Settings <<", "Pull")
+		for _, e in pairs(GetEnemyHeroes()) do
+			_G.zeroBundle.Menu.Pull:addParam(e.charName, "Pull " .. e.charName, SCRIPT_PARAM_ONOFF, true)
+		end
+		
+	_G.zeroBundle.Menu:addSubMenu(">> Prediction <<", "Pred")
+		_G.zeroBundle.Menu.Pred:addParam("qPred", "Q Prediction", SCRIPT_PARAM_LIST, 1, {"VPred", "TRPred", "Internal"})
+	
+	
+	PrettyPrint("Loaded: <b>Blitzcrank - I Dunno For Turtle</b>", false)
+end
+
+function ChampBlitzcrank:KillSteal()
+	--[[
+	for _,e in pairs(GetEnemyHeroes()) do
+		if e and ValidTarget(e) then
+			eD = GetDistanceSqr(e)
+			if eD < self.aaRange and spellReady(_E) and self:EDamage(e) > e.health then
+				CastSpell(_E, e.x, e.z)
+				myHero:Attack(e)
+				return true
+			elseif eD < self.abilityQ.range and spellReady(_Q) and self:QDamage(e) > e.health then
+				CastSpell(_Q, e.z, e.z)
+				return true
+			end
+		end
+	end
+	]]--
+end
+
+function ChampBlitzcrank:SetupSkills()
+	_G.zeroBundle.Prediction:AddQ(self.abilityQ.type, self.abilityQ.delay, self.abilityQ.range, self.abilityQ.width, self.abilityQ.speed, true)
+end
+
+function ChampBlitzcrank:Combo()
+	target = self.bTarget
+	if target and not target.dead and target.health > 0 and ValidTarget(target) then
+		
+		tD = GetDistanceSqr(target)
+		
+		if _G.zeroBundle.Menu.Combo.e and tD < self.aaRange * self.aaRange then
+			CastSpell(_E)
+			myHero:Attack(tD)
+			return true
+		end
+		
+		if _G.zeroBundle.Menu.Combo.r and tD < self.abilityR.range * self.abilityR.range and spellReady(_R) then
+			
+		end
+		
+		if _G.zeroBundle.Menu.Combo.q and tD < self.abilityQ.range * self.abilityQ.range and spellReady(_Q) then
+			q = _G.zeroBundle.Prediction:PredictR(target, 1.5)
+			if q then
+				CastSpell(_Q, q.x, q.z)
+				if _G.zeroBundle.Menu.Combo.e and spellReady(_E) then
+					CastSpell(_E)
+					myHero:Attack(target)
+				end
+				return true
+			end
+		end
+		
+	end
+end
+
+function ChampBlitzcrank:Harass()
+	target = self.bTarget
+	if target and not target.dead and target.health > 0 and ValidTarget(target) then
+		
+	end
+end
+
+function ChampBlitzcrank:LaneClear()
+	self.target:Update("LaneClear")
+	if _G.zeroBundle.Menu.Keys.harassLaneClear then
+		self:Harass()
+	end
+	
+	for _,m in pairs(self.target.minion.objects) do
+		if m and ValidTarget(m) then
+			mR = GetDistanceSqr(m)
+			
+		end
+	end
+end
+
+function ChampBlitzcrank:JungleClear()
+	
+end
+
+function ChampBlitzcrank:LastHit()
+	
+end
+
+function ChampBlitzcrank:OnCreateObj(object)
+	
+end
+
+function ChampBlitzcrank:OnDeleteObj(object)
+	
+end
+
+function ChampBlitzcrank:OnApplyBuff(source, unit, buff)
+	
+end
+
+function ChampBlitzcrank:OnRemoveBuff(unit, buff)
+	
+end
+
+function ChampBlitzcrank:OnDraw()
+	
+end
+
+function ChampBlitzcrank:OnTick()
+	self.target:Update("Combo")
+	self.bTarget = self.target:ComboTarget()
+end
+
+function ChampBlitzcrank:OnSpellCallBack(s)
+	if s and s.Unit and s.Spell and s.SpellIs then
+		if s.SpellIs == "GapCloser" then
+			
+		end
+	end
+end
+
+function ChampBlitzcrank:GetDamage(t)
+	return math.ceil(self:RDamage(t) + self:EDamage(t) + self:WDamage(t) + self:QDamage(t) + self:PassiveDamage(t))
+end
+
+function ChampBlitzcrank:RDamage(t)
+	if spellReady(_R) then
+		return myHero:CalcMagicDamage(t, ((((myHero:GetSpellData(_R).level * 50) + 50) + (myHero.addDamage * 1.0))))
+	else
+		return 0
+	end
+end
+
+function ChampBlitzcrank:EDamage(t)
+	if spellReady(_E) then
+		return myHero:CalcMagicDamage(t, ((((myHero:GetSpellData(_E).level * 10) + 40) + (myHero.addDamage * 0.6))))
+	else
+		return 0
+	end
+end
+
+function ChampBlitzcrank:WDamage(t)
+	return 0
+end
+
+function ChampBlitzcrank:QDamage(t)
+	if spellReady(_Q) then
+		return myHero:CalcMagicDamage(t, ((((myHero:GetSpellData(_Q).level * 20) + 20) + (myHero.addDamage * 0.4))))
+	else
+		return 0
+	end
+end
+
+function ChampBlitzcrank:PassiveDamage(t)
+	return 0
+end
+
+--[[-----------------------------------------------------
 ------------------INTERNAL FUNCTIONS---------------------
 -----------------------------------------------------]]--
 
@@ -4917,10 +5572,17 @@ local champLoaded = false
 local bUser = GetUser()
 
 function OnLoad()
+	--local r = _Required()
+	--r:Add({Name = "SimpleLib", Url = "raw.githubusercontent.com/jachicao/BoL/master/SimpleLib.lua"})
+    --r:Check()
+    --if r:IsDownloading() then return end
+	
 	_G.zeroBundle.Menu = scriptConfig("--[[ Zer0 ]]--", "ZeroBundle")
 	GlobalMenu()
 	
 	_G.zeroBundle.Aware = MyAwareness()
+	_G.zeroBundle.SpellTracker = MySpellTracker()
+	--_G.zeroBundle.ZPrediction = ZPrediction()
 	
 	DelayAction(function()
 	
@@ -4933,8 +5595,14 @@ function OnLoad()
 		elseif myHero.charName == "Zoe" and bUser == "AZer0" then
 			_G.zeroBundle.Champion = ChampZoe()
 			champLoaded = true
+		elseif myHero.charName == "Xayah" and bUser == "AZer0" then
+			_G.zeroBundle.Champion = ChampXayah()
+			champLoaded = true
 		elseif myHero.charName == "Fiora" then
 			_G.zeroBundle.Champion = ChampFiora()
+			champLoaded = true
+		elseif myHero.charName == "Blitzcrank" then
+			_G.zeroBundle.Champion = ChampBlitzcrank()
 			champLoaded = true
 		end
 		
@@ -4945,6 +5613,10 @@ function OnLoad()
 			_G.zeroBundle.Prediction = MyPrediction()
 			_G.zeroBundle.Champion:SetupSkills()
 			_G.zeroBundle.ItemManager = MyItems()
+			
+			if _G.zeroBundle.Champion.champData.useSpellCallBacks then
+				_G.zeroBundle.SpellTracker:AddCallBack(_G.zeroBundle.Champion:OnSpellCallBack)
+			end
 		end
 	
 	end, 5)
@@ -5091,4 +5763,191 @@ function OnTick()
 			_G.zeroBundle.Champion:LastHit()
 		end
 	end
+end
+
+class "_Downloader"
+function _Downloader:__init(t)
+    local name = t.Name
+    local url = t.Url
+    local extension = t.Extension ~= nil and t.Extension or "lua"
+    local usehttps = t.UseHttps ~= nil and t.UseHttps or true
+    self.SavePath = LIB_PATH..name.."."..extension
+    self.ScriptPath = '/BoL/TCPUpdater/GetScript'..(usehttps and '5' or '6')..'.php?script='..self:Base64Encode(url)..'&rand='..math.random(99999999)
+    self:CreateSocket(self.ScriptPath)
+    self.DownloadStatus = 'Connect to Server'
+    self.GotScript = false
+end
+
+function _Downloader:CreateSocket(url)
+    if not self.LuaSocket then
+        self.LuaSocket = require("socket")
+    else
+        self.Socket:close()
+        self.Socket = nil
+        self.Size = nil
+        self.RecvStarted = false
+    end
+    self.Socket = self.LuaSocket.tcp()
+    if not self.Socket then
+        print('Socket Error')
+    else
+        self.Socket:settimeout(0, 'b')
+        self.Socket:settimeout(99999999, 't')
+        self.Socket:connect('sx-bol.eu', 80)
+        self.Url = url
+        self.Started = false
+        self.LastPrint = ""
+        self.File = ""
+    end
+end
+
+function _Downloader:Download()
+    if self.GotScript then return end
+    self.Receive, self.Status, self.Snipped = self.Socket:receive(1024)
+    if self.Status == 'timeout' and not self.Started then
+        self.Started = true
+        self.Socket:send("GET "..self.Url.." HTTP/1.1\r\nHost: sx-bol.eu\r\n\r\n")
+    end
+    if (self.Receive or (#self.Snipped > 0)) and not self.RecvStarted then
+        self.RecvStarted = true
+        self.DownloadStatus = 'Downloading Script (0%)'
+    end
+
+    self.File = self.File .. (self.Receive or self.Snipped)
+    if self.File:find('</si'..'ze>') then
+        if not self.Size then
+            self.Size = tonumber(self.File:sub(self.File:find('<si'..'ze>')+6,self.File:find('</si'..'ze>')-1))
+        end
+        if self.File:find('<scr'..'ipt>') then
+            local _,ScriptFind = self.File:find('<scr'..'ipt>')
+            local ScriptEnd = self.File:find('</scr'..'ipt>')
+            if ScriptEnd then ScriptEnd = ScriptEnd - 1 end
+            local DownloadedSize = self.File:sub(ScriptFind+1,ScriptEnd or -1):len()
+            self.DownloadStatus = 'Downloading Script ('..math.round(100/self.Size*DownloadedSize,2)..'%)'
+        end
+    end
+    if self.File:find('</scr'..'ipt>') then
+        self.DownloadStatus = 'Downloading Script (100%)'
+        local a,b = self.File:find('\r\n\r\n')
+        self.File = self.File:sub(a,-1)
+        self.NewFile = ''
+        for line,content in ipairs(self.File:split('\n')) do
+            if content:len() > 5 then
+                self.NewFile = self.NewFile .. content
+            end
+        end
+        local HeaderEnd, ContentStart = self.NewFile:find('<sc'..'ript>')
+        local ContentEnd, _ = self.NewFile:find('</scr'..'ipt>')
+        if not ContentStart or not ContentEnd then
+            if self.CallbackError and type(self.CallbackError) == 'function' then
+                self.CallbackError()
+            end
+        else
+            local newf = self.NewFile:sub(ContentStart+1,ContentEnd-1)
+            local newf = newf:gsub('\r','')
+            if newf:len() ~= self.Size then
+                if self.CallbackError and type(self.CallbackError) == 'function' then
+                    self.CallbackError()
+                end
+                return
+            end
+            local newf = Base64Decode(newf)
+            if type(load(newf)) ~= 'function' then
+                if self.CallbackError and type(self.CallbackError) == 'function' then
+                    self.CallbackError()
+                end
+            else
+                local f = io.open(self.SavePath,"w+b")
+                f:write(newf)
+                f:close()
+                if self.CallbackUpdate and type(self.CallbackUpdate) == 'function' then
+                    self.CallbackUpdate(self.OnlineVersion,self.LocalVersion)
+                end
+            end
+        end
+        self.GotScript = true
+    end
+end
+
+function _Downloader:Base64Encode(data)
+    local b='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    return ((data:gsub('.', function(x)
+        local r,b='',x:byte()
+        for i=8,1,-1 do r=r..(b%2^i-b%2^(i-1)>0 and '1' or '0') end
+        return r;
+    end)..'0000'):gsub('%d%d%d?%d?%d?%d?', function(x)
+        if (#x < 6) then return '' end
+        local c=0
+        for i=1,6 do c=c+(x:sub(i,i)=='1' and 2^(6-i) or 0) end
+        return b:sub(c+1,c+1)
+    end)..({ '', '==', '=' })[#data%3+1])
+end
+
+class "_Required"
+function _Required:__init()
+    self.requirements = {}
+    self.downloading = {}
+    return self
+end
+
+function _Required:Add(t)
+    assert(t and type(t) == "table", "_Required: table is invalid!")
+    local name = t.Name
+    assert(name and type(name) == "string", "_Required: name is invalid!")
+    local url = t.Url
+    assert(url and type(url) == "string", "_Required: url is invalid!")
+    local extension = t.Extension ~= nil and t.Extension or "lua"
+    local usehttps = t.UseHttps ~= nil and t.UseHttps or true
+    table.insert(self.requirements, {Name = name, Url = url, Extension = extension, UseHttps = usehttps})
+end
+
+function _Required:Check()
+    for i, tab in pairs(self.requirements) do
+        local name = tab.Name
+        local url = tab.Url
+        local extension = tab.Extension
+        local usehttps = tab.UseHttps
+        if not FileExist(LIB_PATH..name.."."..extension) then
+            print("Downloading a required library called "..name.. ". Please wait...")
+            local d = _Downloader(tab)
+            table.insert(self.downloading, d)
+        end
+    end
+    
+    if #self.downloading > 0 then
+        for i = 1, #self.downloading, 1 do 
+            local d = self.downloading[i]
+            AddTickCallback(function() d:Download() end)
+        end
+        self:CheckDownloads()
+    else
+        for i, tab in pairs(self.requirements) do
+            local name = tab.Name
+            local url = tab.Url
+            local extension = tab.Extension
+            local usehttps = tab.UseHttps
+            if FileExist(LIB_PATH..name.."."..extension) and extension == "lua" then
+                require(name)
+            end
+        end
+    end
+end
+
+function _Required:CheckDownloads()
+    if #self.downloading == 0 then 
+        print("Required libraries downloaded. Please reload with 2x F9.")
+    else
+        for i = 1, #self.downloading, 1 do
+            local d = self.downloading[i]
+            if d.GotScript then
+                table.remove(self.downloading, i)
+                break
+            end
+        end
+        DelayAction(function() self:CheckDownloads() end, 2) 
+    end 
+end
+
+function _Required:IsDownloading()
+    return self.downloading ~= nil and #self.downloading > 0 or false
 end
