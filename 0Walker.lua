@@ -1,15 +1,40 @@
 --[[
-0Walker
+Name: 0Walker
 By: AZer0
 
+Please let me know of any errors you may find! This is in early beta still.
+
 Requires: VPrediction
+
+API:
+_G.ZWalker:EnableAA()
+_G.ZWalker:DisableAA()
+
+_G.ZWalker:EnableMovement()
+_G.ZWalker:DisableMovement()
+
+_G.ZWalker:ForceTarget(target)
+_G.ZWalker:ForcePoint(x, z)
+
+_G.ZWalker:AddPreAttackCallBack(cb)
+_G.ZWalker:AddAttackCallBack(cb)
+_G.ZWalker:AddPostAttackCallBack(cb)
+
+_G.ZWalker:GetOrbTarget()
+
+_G.ZWalker:ActiveMode()
+
+_G.ZWalker:IsLoaded()
+
+_G.ZWalkerVer
+
 
 To Do:
 -Check for AA cancels
 -Bonus Damage (Vayne Q, etc)
 ]]--
 
-_G.ZWalkerVer = "1.02"
+_G.ZWalkerVer = "1.04"
 _G.ZWalker = nil
 
 class("ZWalker")
@@ -104,7 +129,7 @@ function ZWalker:OrbWalk(target, point)
 			local toMouse = Vector(myHero) + 400 * (Vector(mousePos) - Vector(myHero)):normalized()
 			movePos = {toMouse.x, toMouse.z}
 		elseif self.menu.mode == 2 and self.target and GetDistanceSqr(self.target) <= self.trueRange * self.trueRange then
-			local point = self.VPred:GetPredictedPos(target, 0, 2 * myHero.ms, myHero, false)
+			local point = self:PredPosition(target, 0, 2 * myHero.ms, myHero, false)
 			if GetDistanceSqr(point) < 100*100 + math.pow(self.VPred:GetHitBox(target), 2) then
 				point = Vector(Vector(myHero) - point):normalized() * 50
 			end
@@ -159,6 +184,18 @@ end
 function ZWalker:GetOrbTarget()
 	if self.forceTarget then return self.forceTarget end
 	return self.target
+end
+
+function ZWalker:ActiveMode()
+	return self.mode
+end
+
+function ZWalker:IsLoaded()
+	if self.setup["Menu"] and self.setup["Pred"] then
+		return true
+	else
+		return false
+	end
 end
 
 --CallBack Functions
@@ -295,6 +332,7 @@ function ZWalker:GetKillableMinion()
 		if minion and self:ValidMinion(minion) then
 			local windDelay = self:WindUpTime(true) + GetDistance(minion.pos, myHero.pos) / self.projectileSpeed - 0.07
 			local predHP = self:PredHP(minion, windDelay, self.menu.FineTune.eWindUp / 1000)
+			print(predHP)
 			if predHP < self:GetDamage(minion, myHero, "AA") - (self:GetDamage(minion, myHero, "AA") / 10) and predHP > -30 then
 				if lowestMinion == nil then
 					lowestMinion = minion
@@ -387,7 +425,20 @@ end
 
 --Prediction Functions
 function ZWalker:PredHP(m, t, d)
-	return self.VPred:GetPredictedHealth(m, t, d)
+	if self.menu.FineTune.pred == 1 then
+		return self.VPred:GetPredictedHealth(m, t, d)
+	elseif self.menu.FineTune.pred == 2 then
+		a, b, c, d = self.TRPred:GetMinionPrediction(m, t)
+		return d
+	end
+end
+
+function ZWalker:PredPosition(t, d, s, f)
+	if self.menu.FineTune.pred == 1 then
+		return self.VPred:GetPredictedPos(t, d, s, f, false)
+	elseif self.menu.FineTune.pred == 2 then
+		return self.TRPred:GetUnitPosition(t, d, true)
+	end
 end
 
 function ZWalker:AddPrediction()
@@ -572,9 +623,225 @@ function ZWalker:GetDamage(target, source, spell)
 	end
 end
 
---BoL On Function
+--Updater Functions
+function _ScriptUpdate:__init(tab)
+    assert(tab and type(tab) == "table", "_ScriptUpdate: table is invalid!")
+    self.LocalVersion = tab.LocalVersion
+    assert(self.LocalVersion and type(self.LocalVersion) == "number", "_ScriptUpdate: LocalVersion is invalid!")
+    local UseHttps = tab.UseHttps ~= nil and tab.UseHttps or true
+    local VersionPath = tab.VersionPath
+    assert(VersionPath and type(VersionPath) == "string", "_ScriptUpdate: VersionPath is invalid!")
+    local ScriptPath = tab.ScriptPath
+    assert(ScriptPath and type(ScriptPath) == "string", "_ScriptUpdate: ScriptPath is invalid!")
+    local SavePath = tab.SavePath
+    assert(SavePath and type(SavePath) == "string", "_ScriptUpdate: SavePath is invalid!")
+    self.VersionPath = '/BoL/TCPUpdater/GetScript'..(UseHttps and '5' or '6')..'.php?script='..self:Base64Encode(VersionPath)..'&rand='..math.random(99999999)
+    self.ScriptPath = '/BoL/TCPUpdater/GetScript'..(UseHttps and '5' or '6')..'.php?script='..self:Base64Encode(ScriptPath)..'&rand='..math.random(99999999)
+    self.SavePath = SavePath
+    self.CallbackUpdate = tab.CallbackUpdate
+    self.CallbackNoUpdate = tab.CallbackNoUpdate
+    self.CallbackNewVersion = tab.CallbackNewVersion
+    self.CallbackError = tab.CallbackError
+    --AddDrawCallback(function() self:OnDraw() end)
+    self:CreateSocket(self.VersionPath)
+    self.DownloadStatus = 'Connect to Server for VersionInfo'
+    AddTickCallback(function() self:GetOnlineVersion() end)
+end
 
+function _ScriptUpdate:print(str)
+    print('<font color="#FFFFFF">'..os.clock()..': '..str)
+end
+
+function _ScriptUpdate:OnDraw()
+    if self.DownloadStatus ~= 'Downloading Script (100%)' then
+    end
+end
+
+function _ScriptUpdate:CreateSocket(url)
+    if not self.LuaSocket then
+        self.LuaSocket = require("socket")
+    else
+        self.Socket:close()
+        self.Socket = nil
+        self.Size = nil
+        self.RecvStarted = false
+    end
+    self.Socket = self.LuaSocket.tcp()
+    if not self.Socket then
+        print('Socket Error')
+    else
+        self.Socket:settimeout(0, 'b')
+        self.Socket:settimeout(99999999, 't')
+        self.Socket:connect('sx-bol.eu', 80)
+        self.Url = url
+        self.Started = false
+        self.LastPrint = ""
+        self.File = ""
+    end
+end
+
+function _ScriptUpdate:Base64Encode(data)
+    local b='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    return ((data:gsub('.', function(x)
+        local r,b='',x:byte()
+        for i=8,1,-1 do r=r..(b%2^i-b%2^(i-1)>0 and '1' or '0') end
+        return r;
+    end)..'0000'):gsub('%d%d%d?%d?%d?%d?', function(x)
+        if (#x < 6) then return '' end
+        local c=0
+        for i=1,6 do c=c+(x:sub(i,i)=='1' and 2^(6-i) or 0) end
+        return b:sub(c+1,c+1)
+    end)..({ '', '==', '=' })[#data%3+1])
+end
+
+function _ScriptUpdate:GetOnlineVersion()
+    if self.GotScriptVersion then return end
+
+    self.Receive, self.Status, self.Snipped = self.Socket:receive(1024)
+    if self.Status == 'timeout' and not self.Started then
+        self.Started = true
+        self.Socket:send("GET "..self.Url.." HTTP/1.1\r\nHost: sx-bol.eu\r\n\r\n")
+    end
+    if (self.Receive or (#self.Snipped > 0)) and not self.RecvStarted then
+        self.RecvStarted = true
+        self.DownloadStatus = 'Downloading VersionInfo (0%)'
+    end
+
+    self.File = self.File .. (self.Receive or self.Snipped)
+    if self.File:find('</s'..'ize>') then
+        if not self.Size then
+            self.Size = tonumber(self.File:sub(self.File:find('<si'..'ze>')+6,self.File:find('</si'..'ze>')-1))
+        end
+        if self.File:find('<scr'..'ipt>') then
+            local _,ScriptFind = self.File:find('<scr'..'ipt>')
+            local ScriptEnd = self.File:find('</scr'..'ipt>')
+            if ScriptEnd then ScriptEnd = ScriptEnd - 1 end
+            local DownloadedSize = self.File:sub(ScriptFind+1,ScriptEnd or -1):len()
+            self.DownloadStatus = 'Downloading VersionInfo ('..math.round(100/self.Size*DownloadedSize,2)..'%)'
+        end
+    end
+    if self.File:find('</scr'..'ipt>') then
+        self.DownloadStatus = 'Downloading VersionInfo (100%)'
+        local a,b = self.File:find('\r\n\r\n')
+        self.File = self.File:sub(a,-1)
+        self.NewFile = ''
+        for line,content in ipairs(self.File:split('\n')) do
+            if content:len() > 5 then
+                self.NewFile = self.NewFile .. content
+            end
+        end
+        local HeaderEnd, ContentStart = self.File:find('<scr'..'ipt>')
+        local ContentEnd, _ = self.File:find('</sc'..'ript>')
+        if not ContentStart or not ContentEnd then
+            if self.CallbackError and type(self.CallbackError) == 'function' then
+                self.CallbackError()
+            end
+        else
+            self.OnlineVersion = (Base64Decode(self.File:sub(ContentStart + 1,ContentEnd-1)))
+            if self.OnlineVersion ~= nil then
+                self.OnlineVersion = tonumber(self.OnlineVersion)
+                if self.OnlineVersion ~= nil and self.LocalVersion ~= nil and type(self.OnlineVersion) == "number" and type(self.LocalVersion) == "number" and self.OnlineVersion > self.LocalVersion then
+                    if self.CallbackNewVersion and type(self.CallbackNewVersion) == 'function' then
+                        self.CallbackNewVersion(self.OnlineVersion,self.LocalVersion)
+                    end
+                    self:CreateSocket(self.ScriptPath)
+                    self.DownloadStatus = 'Connect to Server for ScriptDownload'
+                    AddTickCallback(function() self:DownloadUpdate() end)
+                else
+                    if self.CallbackNoUpdate and type(self.CallbackNoUpdate) == 'function' then
+                        self.CallbackNoUpdate(self.LocalVersion)
+                    end
+                end
+            end
+        end
+        self.GotScriptVersion = true
+    end
+end
+
+function _ScriptUpdate:DownloadUpdate()
+    if self.GotScriptUpdate then return end
+    self.Receive, self.Status, self.Snipped = self.Socket:receive(1024)
+    if self.Status == 'timeout' and not self.Started then
+        self.Started = true
+        self.Socket:send("GET "..self.Url.." HTTP/1.1\r\nHost: sx-bol.eu\r\n\r\n")
+    end
+    if (self.Receive or (#self.Snipped > 0)) and not self.RecvStarted then
+        self.RecvStarted = true
+        self.DownloadStatus = 'Downloading Script (0%)'
+    end
+
+    self.File = self.File .. (self.Receive or self.Snipped)
+    if self.File:find('</si'..'ze>') then
+        if not self.Size then
+            self.Size = tonumber(self.File:sub(self.File:find('<si'..'ze>')+6,self.File:find('</si'..'ze>')-1))
+        end
+        if self.File:find('<scr'..'ipt>') then
+            local _,ScriptFind = self.File:find('<scr'..'ipt>')
+            local ScriptEnd = self.File:find('</scr'..'ipt>')
+            if ScriptEnd then ScriptEnd = ScriptEnd - 1 end
+            local DownloadedSize = self.File:sub(ScriptFind+1,ScriptEnd or -1):len()
+            self.DownloadStatus = 'Downloading Script ('..math.round(100/self.Size*DownloadedSize,2)..'%)'
+        end
+    end
+    if self.File:find('</scr'..'ipt>') then
+        self.DownloadStatus = 'Downloading Script (100%)'
+        local a,b = self.File:find('\r\n\r\n')
+        self.File = self.File:sub(a,-1)
+        self.NewFile = ''
+        for line,content in ipairs(self.File:split('\n')) do
+            if content:len() > 5 then
+                self.NewFile = self.NewFile .. content
+            end
+        end
+        local HeaderEnd, ContentStart = self.NewFile:find('<sc'..'ript>')
+        local ContentEnd, _ = self.NewFile:find('</scr'..'ipt>')
+        if not ContentStart or not ContentEnd then
+            if self.CallbackError and type(self.CallbackError) == 'function' then
+                self.CallbackError()
+            end
+        else
+            local newf = self.NewFile:sub(ContentStart+1,ContentEnd-1)
+            local newf = newf:gsub('\r','')
+            if newf:len() ~= self.Size then
+                if self.CallbackError and type(self.CallbackError) == 'function' then
+                    self.CallbackError()
+                end
+                return
+            end
+            local newf = Base64Decode(newf)
+            if type(load(newf)) ~= 'function' then
+                if self.CallbackError and type(self.CallbackError) == 'function' then
+                    self.CallbackError()
+                end
+            else
+                local f = io.open(self.SavePath,"w+b")
+                f:write(newf)
+                f:close()
+                if self.CallbackUpdate and type(self.CallbackUpdate) == 'function' then
+                    self.CallbackUpdate(self.OnlineVersion,self.LocalVersion)
+                end
+            end
+        end
+        self.GotScriptUpdate = true
+    end
+end
+
+function CheckUpdates()
+	local ToUpdate = {}
+	ToUpdate.LocalVersion = _G.ZWalkerVer
+	ToUpdate.VersionPath = "raw.githubusercontent.com/azero/BoL/LeagueBoL/version/0Walker.version"
+	ToUpdate.ScriptPath = "raw.githubusercontent.com/azero/BoL/LeagueBoL/0Walker.lua"
+	ToUpdate.SavePath = LIB_PATH .. "0Walker.lua"
+	ToUpdate.CallbackUpdate = function(NewVersion,OldVersion) PrintMessage("Updated from " .. _G.ZWalkerVer .. " to " .. NewVersion .. ". Please reload with 2x F9.") end
+	ToUpdate.CallbackNoUpdate = function(OldVersion) PrintMessage("No Updates Found.") end
+	ToUpdate.CallbackNewVersion = function(NewVersion) PrintMessage("New Version found (" .. NewVersion .. "). Please wait...") end
+	ToUpdate.CallbackError = function(NewVersion) PrintMessage("Error while trying to check update.") end
+	_ScriptUpdate(ToUpdate)
+end
+
+--BoL On Function
 function OnLoad()
+	CheckUpdates()
 	_G.ZWalker = ZWalker()
 end
 
