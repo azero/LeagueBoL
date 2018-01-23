@@ -34,7 +34,7 @@ To Do:
 -Bonus Damage (Vayne Q, etc)
 ]]--
 
-_G.ZWalkerVer = 1.04
+_G.ZWalkerVer = 104
 _G.ZWalker = nil
 
 class("ZWalker")
