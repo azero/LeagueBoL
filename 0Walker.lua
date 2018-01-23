@@ -34,7 +34,7 @@ To Do:
 -Bonus Damage (Vayne Q, etc)
 ]]--
 
-_G.ZWalkerVer = 1.04
+_G.ZWalkerVer = 1.03
 _G.ZWalker = nil
 
 class("ZWalker")
@@ -834,9 +834,9 @@ end
 function CheckUpdates(v)
 	local ToUpdate = {}
 	ToUpdate.LocalVersion = v
-	ToUpdate.VersionPath = "raw.githubusercontent.com/azero/BoL/LeagueBoL/version/0Walker.ver"
-	ToUpdate.ScriptPath = "raw.githubusercontent.com/azero/BoL/LeagueBoL/0Walker.lua"
-	ToUpdate.SavePath = LIB_PATH .. "0Walker.lua"
+	ToUpdate.VersionPath = "raw.githubusercontent.com/azero/LeagueBoL/master/0Walker.ver"
+	ToUpdate.ScriptPath = "raw.githubusercontent.com/azero/LeagueBoL/master/0Walker.lua"
+	ToUpdate.SavePath = SCRIPT_PATH .. "0Walker.lua"
 	ToUpdate.CallbackUpdate = function(NewVersion,OldVersion) PrintMessage("Updated from " .. OldVersion .. " to " .. NewVersion .. ". Please reload with 2x F9.") end
 	ToUpdate.CallbackNoUpdate = function(OldVersion) PrintMessage("Latest Version: " .. OldVersion) end
 	ToUpdate.CallbackNewVersion = function(NewVersion) PrintMessage("New Version found (" .. NewVersion .. "). Downloading...") end
