@@ -34,7 +34,7 @@ To Do:
 -Bonus Damage (Vayne Q, etc)
 ]]--
 
-_G.ZWalkerVer = "1.04"
+_G.ZWalkerVer = 1.04
 _G.ZWalker = nil
 
 class("ZWalker")
@@ -624,6 +624,7 @@ function ZWalker:GetDamage(target, source, spell)
 end
 
 --Updater Functions
+class("_ScriptUpdate")
 function _ScriptUpdate:__init(tab)
     assert(tab and type(tab) == "table", "_ScriptUpdate: table is invalid!")
     self.LocalVersion = tab.LocalVersion
@@ -826,22 +827,27 @@ function _ScriptUpdate:DownloadUpdate()
     end
 end
 
-function CheckUpdates()
+function PrintMessage(m)
+	print("<font color=\"#FF5733\">[<b><i>Updater</i></b>]</font> <font color=\"#3393FF\">" .. m .. "</font>")
+end
+
+function CheckUpdates(v)
 	local ToUpdate = {}
-	ToUpdate.LocalVersion = _G.ZWalkerVer
-	ToUpdate.VersionPath = "raw.githubusercontent.com/azero/BoL/LeagueBoL/version/0Walker.version"
+	ToUpdate.LocalVersion = v
+	ToUpdate.VersionPath = "raw.githubusercontent.com/azero/BoL/LeagueBoL/version/0Walker.ver"
 	ToUpdate.ScriptPath = "raw.githubusercontent.com/azero/BoL/LeagueBoL/0Walker.lua"
 	ToUpdate.SavePath = LIB_PATH .. "0Walker.lua"
-	ToUpdate.CallbackUpdate = function(NewVersion,OldVersion) PrintMessage("Updated from " .. _G.ZWalkerVer .. " to " .. NewVersion .. ". Please reload with 2x F9.") end
-	ToUpdate.CallbackNoUpdate = function(OldVersion) PrintMessage("No Updates Found.") end
-	ToUpdate.CallbackNewVersion = function(NewVersion) PrintMessage("New Version found (" .. NewVersion .. "). Please wait...") end
+	ToUpdate.CallbackUpdate = function(NewVersion,OldVersion) PrintMessage("Updated from " .. OldVersion .. " to " .. NewVersion .. ". Please reload with 2x F9.") end
+	ToUpdate.CallbackNoUpdate = function(OldVersion) PrintMessage("Latest Version: " .. OldVersion) end
+	ToUpdate.CallbackNewVersion = function(NewVersion) PrintMessage("New Version found (" .. NewVersion .. "). Downloading...") end
 	ToUpdate.CallbackError = function(NewVersion) PrintMessage("Error while trying to check update.") end
 	_ScriptUpdate(ToUpdate)
 end
 
+CheckUpdates(_G.ZWalkerVer)
+
 --BoL On Function
 function OnLoad()
-	CheckUpdates()
 	_G.ZWalker = ZWalker()
 end
 
