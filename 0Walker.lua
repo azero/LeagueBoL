@@ -23,18 +23,25 @@ _G.ZWalker:AddPostAttackCallBack(cb)
 _G.ZWalker:GetOrbTarget()
 
 _G.ZWalker:ActiveMode()
+-Modes: Combo, Harass, LaneClear, LastHit
 
 _G.ZWalker:IsLoaded()
 
 _G.ZWalkerVer
 
 
+Change Log:
+105
+-Tweaked TR Pred farming
+-Default pred: TR
+-Added auto updater
+
 To Do:
 -Check for AA cancels
 -Bonus Damage (Vayne Q, etc)
 ]]--
 
-_G.ZWalkerVer = 104
+_G.ZWalkerVer = 105
 _G.ZWalker = nil
 
 class("ZWalker")
@@ -60,6 +67,7 @@ function ZWalker:__init()
 	self.lastAATick = 0
 	self.lastWindTick = 3
 	self.prevAttackTick = 0
+	self.lastOrbWalk = 0
 	
 	self.lastAACanceled = false
 	self.lastAAChecking = false
@@ -121,6 +129,8 @@ function ZWalker:AddMenu()
 end
 
 function ZWalker:OrbWalk(target, point)
+	if self.lastOrbWalk + 3 >= GetTickCount() then return end
+	self.lastOrbWalk = GetTickCount()
 	if self.ableTo["Attack"] and self:AbleToAttack() and self:ValidTarget(target) and self:CBPreAttack(target) then
 		self:Auto(target)
 	elseif self.ableTo["Move"] and self:AbleToMove() then
@@ -275,6 +285,7 @@ end
 --Targeting Functions
 function ZWalker:GetBestClearTarget()
 	b = nil
+	
 	for i, minion in ipairs(self.enemyMinions.objects) do
 		if minion and self:ValidMinion(minion) then
 			if b == nil then
@@ -307,10 +318,22 @@ function ZWalker:GetBestChampionTarget()
 end
 
 function ZWalker:WaitForKillable()
-	for i, minion in ipairs(self.enemyMinions.objects) do
-		local time = self:AnimationTime() + GetDistance(minion.pos, myHero.pos) / self.projectileSpeed - 0.07
-		if self:ValidMinion(minion) and self:PredHP(minion, time * 2.25, self.menu.FineTune.eWindUp / 1000) < self:GetDamage(minion, myHero, "AA") then
-			return true
+	if self.menu.FineTune.pred == 2 then
+		for i, m in pairs(self.enemyMinions.objects) do
+			if m and self:ValidMinion(m) then
+				local t = (self:AnimationTime() + GetDistance(m.pos, myHero.pos) / self.projectileSpeed - 0.07) * 3
+				killable, killableSoon, totalDmg, prededHP = self.TRPred:GetMinionPrediction(m, t)
+				if killable or killableSoon then
+					return true
+				end
+			end
+		end
+	else
+		for i, minion in ipairs(self.enemyMinions.objects) do
+			local time = self:AnimationTime() + GetDistance(minion.pos, myHero.pos) / self.projectileSpeed - 0.07
+			if self:ValidMinion(minion) and self:PredHP(minion, time * 3, self.menu.FineTune.eWindUp / 1000) < self:GetDamage(minion, myHero, "AA") then
+				return true
+			end
 		end
 	end
 end
@@ -326,28 +349,40 @@ function ZWalker:CheckRange()
 end
 
 function ZWalker:GetKillableMinion()
-	lowestMinion = nil
-	lowestHP = nil
-	for _, minion in pairs(self.enemyMinions.objects) do
-		if minion and self:ValidMinion(minion) then
-			local windDelay = self:WindUpTime(true) + GetDistance(minion.pos, myHero.pos) / self.projectileSpeed - 0.07
-			local predHP = self:PredHP(minion, windDelay, self.menu.FineTune.eWindUp / 1000)
-			print(predHP)
-			if predHP < self:GetDamage(minion, myHero, "AA") - (self:GetDamage(minion, myHero, "AA") / 10) and predHP > -30 then
-				if lowestMinion == nil then
-					lowestMinion = minion
-					lowestHP = predHP
-				elseif lowestHP > predHP then
-					lowestMinion = minion
-					lowestHP = predHP
+	if self.menu.FineTune.pred == 2 then
+		for i, m in pairs(self.enemyMinions.objects) do
+			if m and self:ValidMinion(m) then
+				local t = (self:AnimationTime() + GetDistance(m.pos, myHero.pos) / self.projectileSpeed - 0.07)
+				killable, killableSoon, totalDmg, prededHP = self.TRPred:GetMinionPrediction(m, t)
+				if killable or killableSoon and prededHP > -30 then
+					return killable
 				end
 			end
 		end
-	end
-	if lowestMinion then
-		return lowestMinion
 	else
-		return nil
+		lowestMinion = nil
+		lowestHP = nil
+		for _, minion in pairs(self.enemyMinions.objects) do
+			if minion and self:ValidMinion(minion) then
+				local windDelay = self:WindUpTime(true) + GetDistance(minion.pos, myHero.pos) / self.projectileSpeed - 0.07
+				local predHP = self:PredHP(minion, windDelay, self.menu.FineTune.eWindUp / 1000)
+				print(predHP)
+				if predHP < self:GetDamage(minion, myHero, "AA") - (self:GetDamage(minion, myHero, "AA") / 10) and predHP > -30 then
+					if lowestMinion == nil then
+						lowestMinion = minion
+						lowestHP = predHP
+					elseif lowestHP > predHP then
+						lowestMinion = minion
+						lowestHP = predHP
+					end
+				end
+			end
+		end
+		if lowestMinion then
+			return lowestMinion
+		else
+			return nil
+		end
 	end
 end
 
@@ -382,7 +417,13 @@ end
 
 --Mode Functions
 function ZWalker:LaneClear()
-	local killMinion = self:GetKillableMinion()
+	local killMinion = nil
+	if self.mTarget and self:ValidMinion(self.mTarget) then killMinion = self.mTarget
+	elseif self.mTarget then self.mTarget = nil end
+	if not killMinion then
+		killMinion = self:GetKillableMinion()
+		self.mTarget = killMinion
+	end
 	if killMinion then
 		self:OrbWalk(killMinion)
 	elseif not self:WaitForKillable() then
