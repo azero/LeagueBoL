@@ -31,6 +31,9 @@ _G.ZWalkerVer
 
 
 Change Log:
+109
+-Fixed a really stupid bug, setup[Pred] was never being set to true
+
 107
 -Changed the updater
 
@@ -101,7 +104,7 @@ function ZWalker:__init()
 	self.projectileSpeed = 0
 	self.baseWindUp = 3
 	self.baseAnimation = 0.65
-	self.trueRange = myHero.range + GetDistance(myHero.minBBox)
+	self.trueRange = myHero.range + GetDistance(myHero.minBBox) or myHero.range
 	self.lastAuto = 0
 	self.lastAATick = 0
 	self.lastWindTick = 3
@@ -251,7 +254,7 @@ function ZWalker:ActiveMode()
 end
 
 function ZWalker:IsLoaded()
-	if self.setup["Menu"] and self.setup["Pred"] then
+	if self.setup and self.setup["Menu"] and self.setup["Pred"] then
 		return true
 	else
 		return false
@@ -540,6 +543,7 @@ function ZWalker:AddPrediction()
 		end
 		require("VPrediction")
 		self.VPred = VPrediction()
+		self.setup["Pred"] = true
 	else
 		self:PrettyPrint("You must load the menu before adding predictions.")
 	end
@@ -730,17 +734,22 @@ function OnLoad()
 end
 
 function OnDraw()
-	if _G.ZWalker then _G.ZWalker:OnDraw() end
+	if _G.ZWalker and _G.ZWalker:IsLoaded() then _G.ZWalker:OnDraw() end
 end
 
 function OnTick()
-	if _G.ZWalker then _G.ZWalker:OnTick() end
+	if _G.ZWalker and _G.ZWalker:IsLoaded() then _G.ZWalker:OnTick() end
+	if _G.ZWalker and not _G.ZWalker:IsLoaded() then
+		if not _G.ZWalker.setup["Pred"] then
+			_G.ZWalker:AddPrediction()
+		end
+	end
 end
 
 function OnProcessAttack(u, s)
-	if _G.ZWalker then _G.ZWalker:OnProcessSpell(u, s) end
+	if _G.ZWalker and _G.ZWalker:IsLoaded() then _G.ZWalker:OnProcessSpell(u, s) end
 end
 
 function OnProcessSpell(u, s)
-	if _G.ZWalker then _G.ZWalker:OnProcessSpell(u, s) end
+	if _G.ZWalker and _G.ZWalker:IsLoaded() then _G.ZWalker:OnProcessSpell(u, s) end
 end
