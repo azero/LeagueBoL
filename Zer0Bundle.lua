@@ -447,6 +447,7 @@ function OrbWalkManager:__init()
 	self.sxDetected = false
 	self.pewDetected = false
 	self.internal = false
+	self.zwalk = false
 	
 	if _G.Reborn_Loaded or _G.Reborn_Initialised or _G.AutoCarry ~= nil then
 		PrettyPrint("Detected SAC:R.", false)
@@ -458,6 +459,11 @@ function OrbWalkManager:__init()
 		PrettyPrint("Full support for SAC:P not found.", false)
 		DelayAction(function()
 			self.sacPDetected = true
+		end, 5)
+	elseif _G.ZWalkerVer then
+		PrettyPrint("0 Walker Found, Good Choice ;).")
+		DelayAction(function()
+			self.zwalk = true
 		end, 5)
 	--[[else
 		self.internal = true
@@ -507,6 +513,8 @@ function OrbWalkManager:Mode()
 		if _G.zeroBundle.Menu.Keys.carry then
 			return "Combo"
 		end
+	elseif self.zwalk then
+		return _G.ZWalker:ActiveMode()
 	end
 	return nil
 end
@@ -526,6 +534,8 @@ function OrbWalkManager:DisableAA()
 		_Pewalk.AllowAttack(false)
 	elseif self.sxDetected then
 		_G.SxOrb:DisableAttacks()
+	elseif self.zwalk then
+		_G.ZWalker:DisableAA()
 	end
 end
 
@@ -536,14 +546,20 @@ function OrbWalkManager:EnableAA()
 		_Pewalk.AllowAttack(true)
 	elseif self.sxDetected then
 		_G.SxOrb:EnableAttacks()
+	elseif self.zwalk then
+		_G.ZWalker:EnableAA()
 	end
 end
 
 function OrbWalkManager:ForcePoint(p)
-	if self.sxDetected then
-		_G.SxOrb:ForcePoint(p.x, p.z)
-	elseif self.sacDetected then
-		_G.AutoCarry.Orbwalker:OverrideOrbwalkLocation(p)
+	if p then
+		if self.sxDetected then
+			_G.SxOrb:ForcePoint(p.x, p.z)
+		elseif self.sacDetected then
+			_G.AutoCarry.Orbwalker:OverrideOrbwalkLocation(p)
+		elseif self.zwalk then
+			_G.ZWalker:ForcePoint(p.x, p.z)
+		end
 	end
 end
 
@@ -738,7 +754,7 @@ function MyTarget:__init(champRange, minionRange, jungleRange, dmgType)
 		p1 = {"Ashe", "Caitlyn", "Draven", "Ezreal", "Graves", "Jhin", "Jinx", "Kalista", "Kindred", "Kog'Maw", "Lucian", "Master Yi", "Miss Fortune", "Quinn", "Sivir", "Tristana", "Twitch", "Varus", "Vayne", "Xayah", "Xerath", "Zed"}
 	}
 	
-	self:Arrange()
+	--self:Arrange()
 	
 	self.range = {
 		Champion = champRange,
@@ -5572,11 +5588,6 @@ local champLoaded = false
 local bUser = GetUser()
 
 function OnLoad()
-	--local r = _Required()
-	--r:Add({Name = "SimpleLib", Url = "raw.githubusercontent.com/jachicao/BoL/master/SimpleLib.lua"})
-    --r:Check()
-    --if r:IsDownloading() then return end
-	
 	_G.zeroBundle.Menu = scriptConfig("--[[ Zer0 ]]--", "ZeroBundle")
 	GlobalMenu()
 	
@@ -5614,9 +5625,9 @@ function OnLoad()
 			_G.zeroBundle.Champion:SetupSkills()
 			_G.zeroBundle.ItemManager = MyItems()
 			
-			if _G.zeroBundle.Champion.champData.useSpellCallBacks then
+			--[[if _G.zeroBundle.Champion.champData.useSpellCallBacks then
 				_G.zeroBundle.SpellTracker:AddCallBack(_G.zeroBundle.Champion:OnSpellCallBack)
-			end
+			end]]--
 		end
 	
 	end, 5)
@@ -5763,191 +5774,4 @@ function OnTick()
 			_G.zeroBundle.Champion:LastHit()
 		end
 	end
-end
-
-class "_Downloader"
-function _Downloader:__init(t)
-    local name = t.Name
-    local url = t.Url
-    local extension = t.Extension ~= nil and t.Extension or "lua"
-    local usehttps = t.UseHttps ~= nil and t.UseHttps or true
-    self.SavePath = LIB_PATH..name.."."..extension
-    self.ScriptPath = '/BoL/TCPUpdater/GetScript'..(usehttps and '5' or '6')..'.php?script='..self:Base64Encode(url)..'&rand='..math.random(99999999)
-    self:CreateSocket(self.ScriptPath)
-    self.DownloadStatus = 'Connect to Server'
-    self.GotScript = false
-end
-
-function _Downloader:CreateSocket(url)
-    if not self.LuaSocket then
-        self.LuaSocket = require("socket")
-    else
-        self.Socket:close()
-        self.Socket = nil
-        self.Size = nil
-        self.RecvStarted = false
-    end
-    self.Socket = self.LuaSocket.tcp()
-    if not self.Socket then
-        print('Socket Error')
-    else
-        self.Socket:settimeout(0, 'b')
-        self.Socket:settimeout(99999999, 't')
-        self.Socket:connect('sx-bol.eu', 80)
-        self.Url = url
-        self.Started = false
-        self.LastPrint = ""
-        self.File = ""
-    end
-end
-
-function _Downloader:Download()
-    if self.GotScript then return end
-    self.Receive, self.Status, self.Snipped = self.Socket:receive(1024)
-    if self.Status == 'timeout' and not self.Started then
-        self.Started = true
-        self.Socket:send("GET "..self.Url.." HTTP/1.1\r\nHost: sx-bol.eu\r\n\r\n")
-    end
-    if (self.Receive or (#self.Snipped > 0)) and not self.RecvStarted then
-        self.RecvStarted = true
-        self.DownloadStatus = 'Downloading Script (0%)'
-    end
-
-    self.File = self.File .. (self.Receive or self.Snipped)
-    if self.File:find('</si'..'ze>') then
-        if not self.Size then
-            self.Size = tonumber(self.File:sub(self.File:find('<si'..'ze>')+6,self.File:find('</si'..'ze>')-1))
-        end
-        if self.File:find('<scr'..'ipt>') then
-            local _,ScriptFind = self.File:find('<scr'..'ipt>')
-            local ScriptEnd = self.File:find('</scr'..'ipt>')
-            if ScriptEnd then ScriptEnd = ScriptEnd - 1 end
-            local DownloadedSize = self.File:sub(ScriptFind+1,ScriptEnd or -1):len()
-            self.DownloadStatus = 'Downloading Script ('..math.round(100/self.Size*DownloadedSize,2)..'%)'
-        end
-    end
-    if self.File:find('</scr'..'ipt>') then
-        self.DownloadStatus = 'Downloading Script (100%)'
-        local a,b = self.File:find('\r\n\r\n')
-        self.File = self.File:sub(a,-1)
-        self.NewFile = ''
-        for line,content in ipairs(self.File:split('\n')) do
-            if content:len() > 5 then
-                self.NewFile = self.NewFile .. content
-            end
-        end
-        local HeaderEnd, ContentStart = self.NewFile:find('<sc'..'ript>')
-        local ContentEnd, _ = self.NewFile:find('</scr'..'ipt>')
-        if not ContentStart or not ContentEnd then
-            if self.CallbackError and type(self.CallbackError) == 'function' then
-                self.CallbackError()
-            end
-        else
-            local newf = self.NewFile:sub(ContentStart+1,ContentEnd-1)
-            local newf = newf:gsub('\r','')
-            if newf:len() ~= self.Size then
-                if self.CallbackError and type(self.CallbackError) == 'function' then
-                    self.CallbackError()
-                end
-                return
-            end
-            local newf = Base64Decode(newf)
-            if type(load(newf)) ~= 'function' then
-                if self.CallbackError and type(self.CallbackError) == 'function' then
-                    self.CallbackError()
-                end
-            else
-                local f = io.open(self.SavePath,"w+b")
-                f:write(newf)
-                f:close()
-                if self.CallbackUpdate and type(self.CallbackUpdate) == 'function' then
-                    self.CallbackUpdate(self.OnlineVersion,self.LocalVersion)
-                end
-            end
-        end
-        self.GotScript = true
-    end
-end
-
-function _Downloader:Base64Encode(data)
-    local b='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-    return ((data:gsub('.', function(x)
-        local r,b='',x:byte()
-        for i=8,1,-1 do r=r..(b%2^i-b%2^(i-1)>0 and '1' or '0') end
-        return r;
-    end)..'0000'):gsub('%d%d%d?%d?%d?%d?', function(x)
-        if (#x < 6) then return '' end
-        local c=0
-        for i=1,6 do c=c+(x:sub(i,i)=='1' and 2^(6-i) or 0) end
-        return b:sub(c+1,c+1)
-    end)..({ '', '==', '=' })[#data%3+1])
-end
-
-class "_Required"
-function _Required:__init()
-    self.requirements = {}
-    self.downloading = {}
-    return self
-end
-
-function _Required:Add(t)
-    assert(t and type(t) == "table", "_Required: table is invalid!")
-    local name = t.Name
-    assert(name and type(name) == "string", "_Required: name is invalid!")
-    local url = t.Url
-    assert(url and type(url) == "string", "_Required: url is invalid!")
-    local extension = t.Extension ~= nil and t.Extension or "lua"
-    local usehttps = t.UseHttps ~= nil and t.UseHttps or true
-    table.insert(self.requirements, {Name = name, Url = url, Extension = extension, UseHttps = usehttps})
-end
-
-function _Required:Check()
-    for i, tab in pairs(self.requirements) do
-        local name = tab.Name
-        local url = tab.Url
-        local extension = tab.Extension
-        local usehttps = tab.UseHttps
-        if not FileExist(LIB_PATH..name.."."..extension) then
-            print("Downloading a required library called "..name.. ". Please wait...")
-            local d = _Downloader(tab)
-            table.insert(self.downloading, d)
-        end
-    end
-    
-    if #self.downloading > 0 then
-        for i = 1, #self.downloading, 1 do 
-            local d = self.downloading[i]
-            AddTickCallback(function() d:Download() end)
-        end
-        self:CheckDownloads()
-    else
-        for i, tab in pairs(self.requirements) do
-            local name = tab.Name
-            local url = tab.Url
-            local extension = tab.Extension
-            local usehttps = tab.UseHttps
-            if FileExist(LIB_PATH..name.."."..extension) and extension == "lua" then
-                require(name)
-            end
-        end
-    end
-end
-
-function _Required:CheckDownloads()
-    if #self.downloading == 0 then 
-        print("Required libraries downloaded. Please reload with 2x F9.")
-    else
-        for i = 1, #self.downloading, 1 do
-            local d = self.downloading[i]
-            if d.GotScript then
-                table.remove(self.downloading, i)
-                break
-            end
-        end
-        DelayAction(function() self:CheckDownloads() end, 2) 
-    end 
-end
-
-function _Required:IsDownloading()
-    return self.downloading ~= nil and #self.downloading > 0 or false
 end
