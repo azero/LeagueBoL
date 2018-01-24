@@ -45,7 +45,7 @@ To Do:
 -Create a cache system so we dont need to poll the same data multiple times per tick
 ]]--
 
-_G.ZWalkerVer = 107
+_G.ZWalkerVer = 108
 _G.ZWalker = nil
 
 function PrettyPrint(message, isDebug)
@@ -53,7 +53,7 @@ function PrettyPrint(message, isDebug)
 	if m == message then
 		return
 	end
-	print("<font color=\"#FF5733\">[<b><i>0Util</i></b>]</font> <font color=\"#3393FF\">" .. message .. "</font>")
+	print("<font color=\"#FF5733\">[<b><i>Updater</i></b>]</font> <font color=\"#3393FF\">" .. message .. "</font>")
 	m = message
 end
 
@@ -153,6 +153,7 @@ function ZWalker:AddMenu()
 		self.menu.FineTune:addParam("canMode", "Timing Mode", SCRIPT_PARAM_LIST, 2, {"Method 1", "Method 2"})
 		self.menu.FineTune:addParam("sticky", "Sticky Melee Kiting", SCRIPT_PARAM_ONOFF, true)
 		self.menu.FineTune:addParam("aaResets", "Auto Register AA Resets", SCRIPT_PARAM_ONOFF, true)
+		self.menu.FineTune:addParam("bonusDmg", "Calculate Bonus Damage", SCRIPT_PARAM_ONOFF, true)
 		self.menu.FineTune:addParam("pred", "Prediction", SCRIPT_PARAM_LIST, 2, {"V Pred", "TR Pred"})
 	
 	self.menu:addSubMenu(">> Key Settings <<", "Keys")
@@ -175,8 +176,13 @@ function ZWalker:OrbWalk(target, point)
 	elseif self.ableTo["Move"] and self:AbleToMove() then
 		movePos = nil
 		if self.menu.mode == 1 or not self.target then
-			local toMouse = Vector(myHero) + 400 * (Vector(mousePos) - Vector(myHero)):normalized()
-			movePos = {toMouse.x, toMouse.z}
+			if GetDistanceSqr(mousePos) < 50*50 then
+				myHero:HoldPosition()
+				return
+			else
+				local toMouse = Vector(myHero) + 400 * (Vector(mousePos) - Vector(myHero)):normalized()
+				movePos = {toMouse.x, toMouse.z}
+			end
 		elseif self.menu.mode == 2 and self.target and GetDistanceSqr(self.target) <= self.trueRange * self.trueRange then
 			local point = self:PredPosition(target, 0, 2 * myHero.ms, myHero, false)
 			if GetDistanceSqr(point) < 100*100 + math.pow(self.VPred:GetHitBox(target), 2) then
@@ -184,8 +190,13 @@ function ZWalker:OrbWalk(target, point)
 			end
 			movePos = {point.x, point.z}
 		else
-			local toMouse = Vector(myHero) + 400 * (Vector(mousePos) - Vector(myHero)):normalized()
-			movePos = {toMouse.x, toMouse.z}
+			if GetDistanceSqr(mousePos) < 50*50 then
+				myHero:HoldPosition()
+				return
+			else
+				local toMouse = Vector(myHero) + 400 * (Vector(mousePos) - Vector(myHero)):normalized()
+				movePos = {toMouse.x, toMouse.z}
+			end
 		end
 		if movePos then
 			self:MoveTo(movePos[1], movePos[2])
@@ -390,10 +401,10 @@ end
 function ZWalker:GetKillableMinion()
 	if self.menu.FineTune.pred == 2 then
 		for i, m in pairs(self.enemyMinions.objects) do
-			if m and self:ValidMinion(m) then
+			if m and self:ValidMinion(m) and GetDistanceSqr(m) < self.trueRange * self.trueRange then
 				local t = (self:AnimationTime() + GetDistance(m.pos, myHero.pos) / self.projectileSpeed - 0.07)
 				killable, killableSoon, totalDmg, prededHP = self.TRPred:GetMinionPrediction(m, t)
-				if killable or killableSoon and prededHP > -30 then
+				if killable or killableSoon and prededHP > -20 then
 					return killable
 				end
 			end
@@ -700,6 +711,16 @@ function ZWalker:GetDamage(target, source, spell)
 		return source:CalcDamage(target, ad)
 	else
 		return 0
+	end
+end
+
+function ZWalker:BonusDamage(t)
+	bonusDmg = 0
+	if myHero.charName == "Vayne" and myHero:GetSpellData(_Q).level > 0 and myHero:CanUseSpell(_Q) == SUPRESSED then
+		bonusDmg = bonusDmg + myHero:CalcDamage(t, ((0.05 * myHero:GetSpellData(_Q).level) + 0.25 ) * myHero.totalDamage)
+	end
+	if myHero.charName == "Vayne" and not self.bDmgCB["Vayne"] then
+		bonusDmg = 0
 	end
 end
 
