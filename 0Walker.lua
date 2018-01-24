@@ -48,7 +48,7 @@ To Do:
 -Create a cache system so we dont need to poll the same data multiple times per tick
 ]]--
 
-_G.ZWalkerVer = 108
+_G.ZWalkerVer = 110
 _G.ZWalker = nil
 
 function PrettyPrint(message, isDebug)
