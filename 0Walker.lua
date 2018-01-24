@@ -48,8 +48,7 @@ To Do:
 -Create a cache system so we dont need to poll the same data multiple times per tick
 ]]--
 
-_G.ZWalkerVer = 110
-_G.ZWalker = nil
+_G.ZWalkerVer = 111
 
 function PrettyPrint(message, isDebug)
 	if isDebug and not showDebug then return end
@@ -136,9 +135,7 @@ function ZWalker:__init()
 	self.attackCB = {}
 	self.postAttackCB = {}
 	
-	self:AddMenu()
-	self:AddPrediction()
-	self:SetupTargeting()
+	--self:SetupTargeting()
 	
 	self:PrettyPrint("0 Walker - Version: " .. _G.ZWalkerVer .. ".", false)
 	self:PrettyPrint("Please make detailed bug reports!", false)
@@ -169,6 +166,7 @@ function ZWalker:AddMenu()
 		self.menu.Draw:addParam("range", "AA Range", SCRIPT_PARAM_ONOFF, true)
 	
 	self.setup["Menu"] = true
+	self:AddPrediction()
 end
 
 function ZWalker:OrbWalk(target, point)
@@ -654,7 +652,6 @@ function ZWalker:GetTarget()
 	
 end
 
-
 --Timing Functions
 function ZWalker:AbleToAttack()
 	if self.menu.FineTune.canMode == 2 then
@@ -731,6 +728,7 @@ end
 --BoL On Function
 function OnLoad()
 	_G.ZWalker = ZWalker()
+	_G.ZWalker:AddMenu()
 end
 
 function OnDraw()
