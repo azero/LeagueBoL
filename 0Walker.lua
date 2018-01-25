@@ -31,6 +31,10 @@ _G.ZWalkerVer
 
 
 Change Log:
+112
+-Added tower farming
+-Added better last hit drawings
+
 109
 -Fixed a really stupid bug, setup[Pred] was never being set to true
 
@@ -48,7 +52,7 @@ To Do:
 -Create a cache system so we dont need to poll the same data multiple times per tick
 ]]--
 
-_G.ZWalkerVer = 111
+_G.ZWalkerVer = 112
 
 function PrettyPrint(message, isDebug)
 	if isDebug and not showDebug then return end
@@ -58,6 +62,8 @@ function PrettyPrint(message, isDebug)
 	print("<font color=\"#FF5733\">[<b><i>Updater</i></b>]</font> <font color=\"#3393FF\">" .. message .. "</font>")
 	m = message
 end
+
+local eData = {}
 
 --
 --
@@ -135,6 +141,8 @@ function ZWalker:__init()
 	self.attackCB = {}
 	self.postAttackCB = {}
 	
+	self.bDmgCB = {}
+	
 	--self:SetupTargeting()
 	
 	self:PrettyPrint("0 Walker - Version: " .. _G.ZWalkerVer .. ".", false)
@@ -170,7 +178,7 @@ function ZWalker:AddMenu()
 end
 
 function ZWalker:OrbWalk(target, point)
-	if self.lastOrbWalk + 3 >= GetTickCount() then return end
+	if self.lastOrbWalk + 5 >= GetTickCount() then return end
 	self.lastOrbWalk = GetTickCount()
 	if self.ableTo["Attack"] and self:AbleToAttack() and self:ValidTarget(target) and self:CBPreAttack(target) then
 		self:Auto(target)
@@ -402,7 +410,7 @@ end
 function ZWalker:GetKillableMinion()
 	if self.menu.FineTune.pred == 2 then
 		for i, m in pairs(self.enemyMinions.objects) do
-			if m and self:ValidMinion(m) and GetDistanceSqr(m) < self.trueRange * self.trueRange then
+			if m and self:ValidMinion(m) and self:GetDamage(m, myHero, "AA") - ((self:GetDamage(m, myHero, "AA") / 10)) > m.health and GetDistanceSqr(m) < self.trueRange * self.trueRange then
 				local t = (self:AnimationTime() + GetDistance(m.pos, myHero.pos) / self.projectileSpeed - 0.07)
 				killable, killableSoon, totalDmg, prededHP = self.TRPred:GetMinionPrediction(m, t)
 				if killable or killableSoon and prededHP > -20 then
@@ -469,24 +477,32 @@ end
 --Mode Functions
 function ZWalker:LaneClear()
 	local killMinion = nil
-	if self.mTarget and self:ValidMinion(self.mTarget) then killMinion = self.mTarget
+	local towerInRange = self:GetTowerTarget()
+	
+	if not towerInRange and self.mTarget and self:ValidMinion(self.mTarget) then killMinion = self.mTarget
 	elseif self.mTarget then self.mTarget = nil end
+	
 	if not killMinion then
 		killMinion = self:GetKillableMinion()
 		self.mTarget = killMinion
 	end
+	
 	if killMinion then
 		self:OrbWalk(killMinion)
 	elseif not self:WaitForKillable() then
-		m = self.lastMinion
-		if self.menu.FineTune.laneClear == 1 or not self.lastMinion then
-			m = self:GetBestClearTarget()
-		end
-		if m then
-			self.lastMinion = m
-			self:OrbWalk(m)
+		if towerInRange then
+			self:OrbWalk(towerInRange)
 		else
-			self:OrbWalk()
+			m = self.lastMinion
+			if self.menu.FineTune.laneClear == 1 or not self.lastMinion then
+				m = self:GetBestClearTarget()
+			end
+			if m then
+				self.lastMinion = m
+				self:OrbWalk(m)
+			else
+				self:OrbWalk()
+			end
 		end
 	else
 		self:OrbWalk()
@@ -583,6 +599,8 @@ function ZWalker:OnDraw()
 			DrawCircle3D(myHero.x, myHero.y, myHero.z, self.trueRange, 1, ARGB(255, 255, 0, 0))
 		end
 	end
+	--self:DrawMinionHP()
+	self:DrawMinionNewHP()
 end
 
 function ZWalker:OnTick()
@@ -652,6 +670,17 @@ function ZWalker:GetTarget()
 	
 end
 
+function ZWalker:GetTowerTarget()
+	for i=1, objManager.maxObjects, 1 do
+		local tower = objManager:getObject(i)
+		if tower ~= nil and tower.valid and tower.type == "AITurret" and tower.team ~= myHero.team then
+			if GetDistanceSqr(tower.pos) < self.trueRange * self.trueRange then
+				return tower
+			end
+		end
+	end
+end
+
 --Timing Functions
 function ZWalker:AbleToAttack()
 	if self.menu.FineTune.canMode == 2 then
@@ -700,8 +729,9 @@ function ZWalker:MyDamage(t)
 end
 
 function ZWalker:GetDamage(target, source, spell)
-	lvl = source.level
-	ad = source.totalDamage
+	if not target then return 0 end
+	lvl = myHero.level
+	ad = myHero.totalDamage
 	if spell == "Tiamat" then
 		return source:CalcDamage(target, .6 * ad)
 	elseif spell == "Hydra" then
@@ -709,7 +739,7 @@ function ZWalker:GetDamage(target, source, spell)
 	elseif spell == "Ignite" then
 		return 50+20*lvl
 	elseif spell == "AA" then
-		return source:CalcDamage(target, ad)
+		return getDmg("AD", target, myHero)
 	else
 		return 0
 	end
@@ -718,11 +748,77 @@ end
 function ZWalker:BonusDamage(t)
 	bonusDmg = 0
 	if myHero.charName == "Vayne" and myHero:GetSpellData(_Q).level > 0 and myHero:CanUseSpell(_Q) == SUPRESSED then
-		bonusDmg = bonusDmg + myHero:CalcDamage(t, ((0.05 * myHero:GetSpellData(_Q).level) + 0.25 ) * myHero.totalDamage)
+		bonusDmg = bonusDmg + myHero:CalcDamage(t, ((0.05 * myHero:GetSpellData(_Q).level) + 0.25) * myHero.totalDamage)
 	end
-	if myHero.charName == "Vayne" and not self.bDmgCB["Vayne"] then
-		bonusDmg = 0
+	if myHero.charName == "Vayne" and not self.bDmgCB["VayneW"] and myHero:GetSpellData(_W).level > 0 then
+		self.bDmgCB["Vayne"] = true
+		AddCreateObjCallback(VayneWCreateObject)
+		self:PrettyPrint("Added Vayne W Calculations.")
+	elseif myHero.charName and self.bDmgCB["VayneW"] and eData["VayneW"] == t and myHero:GetSpellData(_W).level > 0 then
+		bonusDmg = bonusDmg + 10 + 10 * myHero:GetSpellData(_W).level + (0.03 + (0.01 * myHero:GetSpellData(_W).level)) * minion.maxHealth
 	end
+	if bonusDmg > 0 then
+		return bonusDmg
+	else
+		return 0
+	end
+end
+
+--Drwing
+function ZWalker:DrawMinionHP()
+	for _, m in pairs(self.enemyMinions.objects) do
+		if m and self:ValidMinion(m) and m.health < self:GetDamage(m, myHero, "AA") then
+			DrawCircle(m.x, m.y, m.z, 60, 255255255)
+		end
+	end
+end
+
+function ZWalker:DrawMinionNewHP()
+	for _, m in pairs(self.enemyMinions.objects) do
+		if m ~= nil and m.valid and not m.dead and m.visible and self:ValidMinion(m) then
+			local position, width, height = self:GetHPBar(m)
+			local aaDamage = myHero:CalcDamage(m, myHero.totalDamage)
+			
+			local aaWidth = (aaDamage / m.maxHealth) * width
+			local mobHealthWidth = (m.health / m.maxHealth) * width
+			if mobHealthWidth > 1 then
+				local bars = math.ceil(mobHealthWidth / aaWidth)
+				local c = 1
+				while (c <= bars) do
+					local barX = position.x + (c * aaWidth)
+					if barX < position.x + mobHealthWidth then
+						DrawLine(barX, position.y - 1, barX, position.y + height, 1, 0xFF000000)
+					end
+					c = c + 1
+				end
+			end
+			local remainingAAs = math.ceil(m.health / aaDamage)
+			if m.health <= aaDamage then
+				self:DrawRectangle(position.x - 1, position.y - 1, width + 1, height + 1, 0xFF00FF00)
+			end
+		end
+	end
+end
+
+function ZWalker:GetHPBar(m)
+	local barPos = GetUnitHPBarPos(m)
+    local width = 62
+    local height = 4    
+    barPos.x = barPos.x - 31
+    barPos.y = barPos.y - 2
+    return barPos, width, height
+end
+
+function ZWalker:DrawRectangle(x, y, w, h, c)
+	local lX = x - 1      -- left X
+	local rX = x + w  -- right X
+	local tY = y - 1      -- top Y  
+	local bY = y + h -- bottom Y
+
+	DrawLine(lX, tY, rX, tY,     1, c) --top hori
+	DrawLine(lX, tY, lX, bY,     1, c) --left vert
+	DrawLine(rX, tY, rX, bY + 1, 1, c) --right vert
+	DrawLine(lX, bY, rX, bY,     1, c) --bottom hori
 end
 
 --BoL On Function
