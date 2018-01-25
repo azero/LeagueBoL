@@ -31,6 +31,9 @@ _G.ZWalkerVer
 
 
 Change Log:
+113
+-Took out overkill in the damage prediction for killable minions
+
 112
 -Added tower farming
 -Added better last hit drawings
@@ -52,7 +55,7 @@ To Do:
 -Create a cache system so we dont need to poll the same data multiple times per tick
 ]]--
 
-_G.ZWalkerVer = 112
+_G.ZWalkerVer = 113
 
 function PrettyPrint(message, isDebug)
 	if isDebug and not showDebug then return end
@@ -410,7 +413,7 @@ end
 function ZWalker:GetKillableMinion()
 	if self.menu.FineTune.pred == 2 then
 		for i, m in pairs(self.enemyMinions.objects) do
-			if m and self:ValidMinion(m) and self:GetDamage(m, myHero, "AA") - ((self:GetDamage(m, myHero, "AA") / 10)) > m.health and GetDistanceSqr(m) < self.trueRange * self.trueRange then
+			if m and self:ValidMinion(m) and self:GetDamage(m, myHero, "AA") > m.health and GetDistanceSqr(m) < self.trueRange * self.trueRange then
 				local t = (self:AnimationTime() + GetDistance(m.pos, myHero.pos) / self.projectileSpeed - 0.07)
 				killable, killableSoon, totalDmg, prededHP = self.TRPred:GetMinionPrediction(m, t)
 				if killable or killableSoon and prededHP > -20 then
@@ -426,7 +429,7 @@ function ZWalker:GetKillableMinion()
 				local windDelay = self:WindUpTime(true) + GetDistance(minion.pos, myHero.pos) / self.projectileSpeed - 0.07
 				local predHP = self:PredHP(minion, windDelay, self.menu.FineTune.eWindUp / 1000)
 				print(predHP)
-				if predHP < self:GetDamage(minion, myHero, "AA") - (self:GetDamage(minion, myHero, "AA") / 10) and predHP > -30 then
+				if predHP < self:GetDamage(minion, myHero, "AA") and predHP > -30 then
 					if lowestMinion == nil then
 						lowestMinion = minion
 						lowestHP = predHP
