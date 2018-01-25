@@ -31,6 +31,9 @@ _G.ZWalkerVer
 
 
 Change Log:
+114
+-Added option to disable minion draws
+
 113
 -Took out overkill in the damage prediction for killable minions
 
@@ -52,7 +55,7 @@ Change Log:
 To Do:
 -Check for AA cancels
 -Bonus Damage (Vayne Q, etc)
--Create a cache system so we dont need to poll the same data multiple times per tick
+-Item Damage
 ]]--
 
 _G.ZWalkerVer = 113
@@ -145,6 +148,9 @@ function ZWalker:__init()
 	self.postAttackCB = {}
 	
 	self.bDmgCB = {}
+	self.bonusDamage = {
+		["VayneQ"] = false
+	}
 	
 	--self:SetupTargeting()
 	
@@ -175,6 +181,7 @@ function ZWalker:AddMenu()
 	
 	self.menu:addSubMenu(">> Draw Settings <<", "Draw")
 		self.menu.Draw:addParam("range", "AA Range", SCRIPT_PARAM_ONOFF, true)
+		self.menu.Draw:addParam("minion", "Minion Damage", SCRIPT_PARAM_ONOFF, true)
 	
 	self.setup["Menu"] = true
 	self:AddPrediction()
@@ -603,7 +610,9 @@ function ZWalker:OnDraw()
 		end
 	end
 	--self:DrawMinionHP()
-	self:DrawMinionNewHP()
+	if self.menu.Draw.minion then
+		self:DrawMinionNewHP()
+	end
 end
 
 function ZWalker:OnTick()
@@ -650,6 +659,25 @@ function ZWalker:OnTick()
 	elseif mode == "LastHit" then
 		self.enemyMinions:update()
 		self:LastHit()
+	end
+end
+
+function ZWalker:OnApplyBuff(s, u, b)
+	if not s or not b or not s.valid or not b.valid then return end
+	if myHero.charName == "Vayne" then
+		if s.isMe and b.name == "vaynetumblebonus" then
+			self.bonusDamage["VayneQ"] = true
+		end
+	end
+end
+
+function ZWalker:OnRemoveBuff(s, b)
+	if not s or not b or not s.valid or not b.valid then return end
+	if myHero.charName == "Vayne" then
+		if s.isMe and b.name == "vaynetumblebonus" then
+			self.bonusDamage["VayneQ"] = false
+			print("q gone")
+		end
 	end
 end
 
@@ -707,7 +735,7 @@ function ZWalker:AbleToMove()
 end
 
 function ZWalker:Latency()
-	return GetLatency() / 1500
+	return GetLatency() / 2000
 end
 
 function ZWalker:AnimationTime()
@@ -742,7 +770,7 @@ function ZWalker:GetDamage(target, source, spell)
 	elseif spell == "Ignite" then
 		return 50+20*lvl
 	elseif spell == "AA" then
-		return getDmg("AD", target, myHero)
+		return getDmg("AD", target, myHero) + self:BonusDamage(target)
 	else
 		return 0
 	end
@@ -750,15 +778,8 @@ end
 
 function ZWalker:BonusDamage(t)
 	bonusDmg = 0
-	if myHero.charName == "Vayne" and myHero:GetSpellData(_Q).level > 0 and myHero:CanUseSpell(_Q) == SUPRESSED then
+	if self.bonusDamage["VayneQ"] then
 		bonusDmg = bonusDmg + myHero:CalcDamage(t, ((0.05 * myHero:GetSpellData(_Q).level) + 0.25) * myHero.totalDamage)
-	end
-	if myHero.charName == "Vayne" and not self.bDmgCB["VayneW"] and myHero:GetSpellData(_W).level > 0 then
-		self.bDmgCB["Vayne"] = true
-		AddCreateObjCallback(VayneWCreateObject)
-		self:PrettyPrint("Added Vayne W Calculations.")
-	elseif myHero.charName and self.bDmgCB["VayneW"] and eData["VayneW"] == t and myHero:GetSpellData(_W).level > 0 then
-		bonusDmg = bonusDmg + 10 + 10 * myHero:GetSpellData(_W).level + (0.03 + (0.01 * myHero:GetSpellData(_W).level)) * minion.maxHealth
 	end
 	if bonusDmg > 0 then
 		return bonusDmg
@@ -780,7 +801,7 @@ function ZWalker:DrawMinionNewHP()
 	for _, m in pairs(self.enemyMinions.objects) do
 		if m ~= nil and m.valid and not m.dead and m.visible and self:ValidMinion(m) then
 			local position, width, height = self:GetHPBar(m)
-			local aaDamage = myHero:CalcDamage(m, myHero.totalDamage)
+			local aaDamage = myHero:CalcDamage(m, myHero.totalDamage + self:BonusDamage(m))
 			
 			local aaWidth = (aaDamage / m.maxHealth) * width
 			local mobHealthWidth = (m.health / m.maxHealth) * width
@@ -813,15 +834,15 @@ function ZWalker:GetHPBar(m)
 end
 
 function ZWalker:DrawRectangle(x, y, w, h, c)
-	local lX = x - 1      -- left X
-	local rX = x + w  -- right X
-	local tY = y - 1      -- top Y  
-	local bY = y + h -- bottom Y
+	local lX = x - 1
+	local rX = x + w
+	local tY = y - 1
+	local bY = y + h
 
-	DrawLine(lX, tY, rX, tY,     1, c) --top hori
-	DrawLine(lX, tY, lX, bY,     1, c) --left vert
-	DrawLine(rX, tY, rX, bY + 1, 1, c) --right vert
-	DrawLine(lX, bY, rX, bY,     1, c) --bottom hori
+	DrawLine(lX, tY, rX, tY,     1, c)
+	DrawLine(lX, tY, lX, bY,     1, c)
+	DrawLine(rX, tY, rX, bY + 1, 1, c)
+	DrawLine(lX, bY, rX, bY,     1, c)
 end
 
 --BoL On Function
@@ -841,6 +862,14 @@ function OnTick()
 			_G.ZWalker:AddPrediction()
 		end
 	end
+end
+
+function OnApplyBuff(s, u, b)
+	if _G.ZWalker and _G.ZWalker:IsLoaded() then _G.ZWalker:OnApplyBuff(s, u, b) end
+end
+
+function OnRemoveBuff(s, b)
+	if _G.ZWalker and _G.ZWalker:IsLoaded() then _G.ZWalker:OnRemoveBuff(s, b) end
 end
 
 function OnProcessAttack(u, s)
